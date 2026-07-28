@@ -25,7 +25,7 @@ class _GreenMakeoverScreenState extends State<GreenMakeoverScreen> {
 
   void _openWhatsApp() async {
     const url =
-        'https://wa.me/919876543210?text=Hi%20GharKaMali!%20I%20want%20to%20know%20about%20the%20Green%20Makeover%20package.';
+        'https://wa.me/919643701701?text=Hi%20GharKaMali!%20I%20want%20to%20know%20about%20the%20Green%20Makeover%20package.';
     if (await canLaunchUrlString(url)) {
       await launchUrlString(url, mode: LaunchMode.externalApplication);
     }
