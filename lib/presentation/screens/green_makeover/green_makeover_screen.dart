@@ -152,7 +152,7 @@ class _GreenMakeoverScreenState extends State<GreenMakeoverScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Start with Just ₹299',
+          Text('Start with Just ₹399',
               style: p(24, w: FontWeight.w900, color: C.forest, ls: -0.5)),
           const SizedBox(height: 12),
           Text('Book a professional site visit & consultation.',

@@ -422,16 +422,16 @@ class _BookState extends State<BookScreen> {
   ]));
 
   Widget _stepPlan() => SingleChildScrollView(padding: const EdgeInsets.all(24), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    if (_subPlans.isNotEmpty) ...[
-      GSec('Subscription Plans'),
-      const SizedBox(height: 12),
-      ..._subPlans.map((pl) => _PlanItem(plan: pl, sel: _planId == asInt(pl['id']), onTap: () => _selectPlan(Map<String, dynamic>.from(pl)), displayPrice: _odPrice(Map<String, dynamic>.from(pl as Map)))),
-    ],
     if (_odPlans.isNotEmpty) ...[
-      if (_subPlans.isNotEmpty) const SizedBox(height: 32),
       GSec('One-Time Visit'),
       const SizedBox(height: 12),
       ..._odPlans.map((pl) => _PlanItem(plan: pl, sel: _planId == asInt(pl['id']), onTap: () => _selectPlan(Map<String, dynamic>.from(pl)), displayPrice: _odPrice(Map<String, dynamic>.from(pl as Map)))),
+    ],
+    if (_subPlans.isNotEmpty) ...[
+      if (_odPlans.isNotEmpty) const SizedBox(height: 32),
+      GSec('Subscription Plans'),
+      const SizedBox(height: 12),
+      ..._subPlans.map((pl) => _PlanItem(plan: pl, sel: _planId == asInt(pl['id']), onTap: () => _selectPlan(Map<String, dynamic>.from(pl)), displayPrice: _odPrice(Map<String, dynamic>.from(pl as Map)))),
     ],
   ]));
 
