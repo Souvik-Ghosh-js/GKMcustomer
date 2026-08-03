@@ -23,13 +23,25 @@ class _ShopState extends State<ShopScreen> {
   List<dynamic> _products = [];
   List<dynamic> _categories = [];
   bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
   String _selectedCat = 'All';
   final _searchCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   Timer? _debounce;
   int _page = 1, _pages = 1, _total = 0;
 
-  @override void initState() { super.initState(); _load(); }
+  @override void initState() {
+    super.initState();
+    _load();
+    // Infinite scroll: fetch the next page once the user nears the bottom.
+    _scrollCtrl.addListener(() {
+      if (_loading || _loadingMore || !_hasMore) return;
+      if (_scrollCtrl.position.pixels >= _scrollCtrl.position.maxScrollExtent - 400) {
+        _fetchMore();
+      }
+    });
+  }
   @override void dispose() { _searchCtrl.dispose(); _scrollCtrl.dispose(); _debounce?.cancel(); super.dispose(); }
 
   Future<void> _load() async {
@@ -42,7 +54,7 @@ class _ShopState extends State<ShopScreen> {
     await _fetch();
   }
 
-  // Fetch the current page (server-paginated + server-sorted).
+  // Fetch page 1 fresh (used on initial load / filter changes / pull-to-refresh).
   Future<void> _fetch() async {
     setState(() => _loading = true);
     try {
@@ -56,75 +68,39 @@ class _ShopState extends State<ShopScreen> {
         _products = asList(r['items']);
         _total = asInt(r['total']);
         _pages = asInt(r['pages']);
+        _hasMore = _page < _pages;
         _loading = false;
       });
     } catch (_) { if (mounted) setState(() => _loading = false); }
   }
 
+  // Lazily append the next page as the user scrolls near the bottom —
+  // replaces old-school numbered pagination with continuous loading.
+  Future<void> _fetchMore() async {
+    if (!_hasMore || _loadingMore) return;
+    setState(() => _loadingMore = true);
+    final nextPage = _page + 1;
+    try {
+      final r = await _api.getShopProductsPaged(
+        category: _selectedCat == 'All' ? null : _selectedCat,
+        search: _searchCtrl.text.trim().isNotEmpty ? _searchCtrl.text.trim() : null,
+        page: nextPage,
+        limit: 24,
+      );
+      if (!mounted) return;
+      setState(() {
+        _page = nextPage;
+        _products = [..._products, ...asList(r['items'])];
+        _total = asInt(r['total']);
+        _pages = asInt(r['pages']);
+        _hasMore = _page < _pages;
+        _loadingMore = false;
+      });
+    } catch (_) { if (mounted) setState(() => _loadingMore = false); }
+  }
+
   // Any filter/search change resets to page 1.
-  void _filter() { _page = 1; _fetch(); }
-
-  void _goPage(int n) {
-    if (n < 1 || n > _pages || n == _page) return;
-    setState(() => _page = n);
-    if (_scrollCtrl.hasClients) _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
-    _fetch();
-  }
-
-  // Windowed page list: 1 … (cur-1) cur (cur+1) … last  (-1 = ellipsis marker)
-  List<int> _pageNumbers(int cur, int total) {
-    final out = <int>[];
-    for (int i = 1; i <= total; i++) {
-      if (i == 1 || i == total || (i >= cur - 1 && i <= cur + 1)) {
-        out.add(i);
-      } else if (out.isNotEmpty && out.last != -1) {
-        out.add(-1);
-      }
-    }
-    return out;
-  }
-
-  Widget _buildPagination() {
-    if (_pages <= 1) return const SizedBox.shrink();
-    final btns = <Widget>[
-      _pageBtn('‹', onTap: _page > 1 ? () => _goPage(_page - 1) : null),
-    ];
-    for (final n in _pageNumbers(_page, _pages)) {
-      if (n == -1) {
-        btns.add(Padding(padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Text('…', style: GoogleFonts.poppins(fontWeight: FontWeight.w700, color: Colors.black45))));
-      } else {
-        btns.add(_pageBtn('$n', active: n == _page, onTap: () => _goPage(n)));
-      }
-    }
-    btns.add(_pageBtn('›', onTap: _page < _pages ? () => _goPage(_page + 1) : null));
-    return Column(children: [
-      Text('Page $_page of $_pages · $_total items',
-        style: GoogleFonts.poppins(fontSize: 12, color: Colors.black54, fontWeight: FontWeight.w600)),
-      const SizedBox(height: 10),
-      Wrap(alignment: WrapAlignment.center, spacing: 6, runSpacing: 6, children: btns),
-    ]);
-  }
-
-  Widget _pageBtn(String label, {VoidCallback? onTap, bool active = false}) => Material(
-    color: active ? C.forest : Colors.white,
-    borderRadius: BorderRadius.circular(10),
-    child: InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: onTap,
-      child: Container(
-        constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: active ? C.forest : const Color(0x22000000)),
-        ),
-        child: Text(label, style: GoogleFonts.poppins(fontWeight: FontWeight.w800, fontSize: 14,
-          color: onTap == null ? Colors.black26 : (active ? Colors.white : C.forest))),
-      ),
-    ),
-  );
+  void _filter() { _page = 1; _hasMore = true; _fetch(); }
 
   void _onSearch(String _) {
     _debounce?.cancel();
@@ -161,8 +137,14 @@ class _ShopState extends State<ShopScreen> {
                     controller: _scrollCtrl,
                     physics: const AlwaysScrollableScrollPhysics(),
                     slivers: [
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                          child: Text('$_total product${_total == 1 ? '' : 's'}', style: GoogleFonts.poppins(fontSize: 12, color: Colors.black45, fontWeight: FontWeight.w600)),
+                        ),
+                      ),
                       SliverPadding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                         sliver: SliverGrid(
                           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: 2,
@@ -185,7 +167,11 @@ class _ShopState extends State<ShopScreen> {
                       SliverToBoxAdapter(
                         child: Padding(
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 140),
-                          child: _buildPagination(),
+                          child: _loadingMore
+                            ? const Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: C.forest)))
+                            : !_hasMore && _products.isNotEmpty
+                              ? Center(child: Text("You've reached the end", style: GoogleFonts.poppins(fontSize: 12, color: Colors.black38, fontWeight: FontWeight.w600)))
+                              : const SizedBox.shrink(),
                         ),
                       ),
                     ],
@@ -434,26 +420,69 @@ class _QtyBtn extends StatelessWidget {
   );
 }
 
-class _ProductDetails extends StatelessWidget {
+class _ProductDetails extends StatefulWidget {
   final Map<String, dynamic> pData; final VoidCallback onAdd;
   const _ProductDetails({required this.pData, required this.onAdd});
+  @override State<_ProductDetails> createState() => _ProductDetailsState();
+}
 
-  String _getImageUrl(Map<String, dynamic> pData) {
-    if (pData['images'] is List && (pData['images'] as List).isNotEmpty) {
-      final url = (pData['images'] as List).first.toString();
-      if (url.isNotEmpty && url != 'null') return url;
+class _ProductDetailsState extends State<_ProductDetails> {
+  final _api = Api();
+  late Map<String, dynamic> _data = widget.pData;
+  bool _loadingFull = true;
+  int _imgIdx = 0;
+  final _faqOpen = <int>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFull();
+  }
+
+  // The list tile only carries summary fields (name/price/image/category).
+  // Fetch the full record (long_description, features, faqs, rating, tags,
+  // multi-image gallery, badge) so the modal can show a complete detail page.
+  Future<void> _loadFull() async {
+    final id = asInt(widget.pData['id']);
+    if (id == 0) { setState(() => _loadingFull = false); return; }
+    try {
+      final full = await _api.getShopProduct(id);
+      if (mounted && full is Map) {
+        setState(() { _data = {...widget.pData, ...Map<String, dynamic>.from(full)}; _loadingFull = false; });
+      } else if (mounted) {
+        setState(() => _loadingFull = false);
+      }
+    } catch (_) { if (mounted) setState(() => _loadingFull = false); }
+  }
+
+  List<String> _images() {
+    final imgs = _data['images'];
+    if (imgs is List && imgs.isNotEmpty) {
+      return imgs.map((e) => e.toString()).where((s) => s.isNotEmpty && s != 'null').toList();
     }
-    if (pData['image'] != null) {
-      final url = pData['image'].toString();
-      if (url.isNotEmpty && url != 'null') return url;
-    }
-    return 'https://gkm.gobt.in/uploads/shop/placeholder.jpg';
+    final single = _data['image']?.toString();
+    if (single != null && single.isNotEmpty && single != 'null') return [single];
+    return ['https://gkm.gobt.in/uploads/shop/placeholder.jpg'];
   }
 
   @override
   Widget build(BuildContext ctx) {
     final screenH = MediaQuery.of(ctx).size.height;
     final topInset = MediaQuery.of(ctx).padding.top;
+    final images = _images();
+    final price = asDouble(_data['price']);
+    final mrp = asDouble(_data['mrp']);
+    final discount = mrp > price ? ((mrp - price) / mrp * 100).round() : 0;
+    final rating = asDouble(_data['rating']);
+    final reviewCount = asInt(_data['review_count']);
+    final badge = asStr(_data['badge']);
+    final longDesc = asStr(_data['long_description']);
+    final features = asList(_data['features']).map((e) => e.toString()).where((s) => s.isNotEmpty).toList();
+    final faqs = asList(_data['faqs']).map((e) => asMap(e)).where((m) => m.isNotEmpty).toList();
+    final tags = asList(_data['tags']).map((e) => e.toString()).where((s) => s.isNotEmpty).toList();
+    final stock = _data['stock_quantity'] == null ? null : asInt(_data['stock_quantity']);
+    final outOfStock = stock != null && stock <= 0;
+
     return Container(
       height: screenH - topInset,
       decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(32))),
@@ -466,61 +495,172 @@ class _ProductDetails extends StatelessWidget {
         Expanded(
           child: SingleChildScrollView(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              // ── Product image — contained on white, nothing cropped ──────
+              // ── Product image gallery — contained on white, nothing cropped ──
               Container(
                 color: Colors.white,
-                height: screenH * 0.42,
+                height: screenH * 0.38,
                 padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: CachedNetworkImage(
-                    imageUrl: _getImageUrl(pData),
-                    fit: BoxFit.contain,
-                    width: double.infinity,
-                    placeholder: (_, __) => Container(color: const Color(0xFFF6F8F5), child: const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF4CAF50)))),
-                    errorWidget: (_, __, ___) => Container(
-                      color: const Color(0xFFF6F8F5),
-                      child: Center(child: Icon(Icons.eco_rounded, size: 64, color: C.green.withOpacity(0.4))),
+                child: Stack(children: [
+                  PageView.builder(
+                    onPageChanged: (i) => setState(() => _imgIdx = i),
+                    itemCount: images.length,
+                    itemBuilder: (_, i) => ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: CachedNetworkImage(
+                        imageUrl: images[i],
+                        fit: BoxFit.contain,
+                        width: double.infinity,
+                        placeholder: (_, __) => Container(color: const Color(0xFFF6F8F5), child: const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF4CAF50)))),
+                        errorWidget: (_, __, ___) => Container(
+                          color: const Color(0xFFF6F8F5),
+                          child: Center(child: Icon(Icons.eco_rounded, size: 64, color: C.green.withOpacity(0.4))),
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                  if (images.length > 1)
+                    Positioned(
+                      left: 0, right: 0, bottom: 6,
+                      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: List.generate(images.length, (i) => Container(
+                        width: 6, height: 6,
+                        margin: const EdgeInsets.symmetric(horizontal: 3),
+                        decoration: BoxDecoration(shape: BoxShape.circle, color: i == _imgIdx ? C.forest : C.border),
+                      ))),
+                    ),
+                ]),
               ),
 
               // ── Info ─────────────────────────────────────────────────────
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  // Badge + category
+                  if (badge.isNotEmpty) Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                      decoration: BoxDecoration(color: C.forest.withOpacity(0.08), borderRadius: BorderRadius.circular(7)),
+                      child: Text(badge.toUpperCase(), style: p(9.5, w: FontWeight.w800, color: C.forest, ls: 0.5)),
+                    ),
+                  ),
                   // Name + price row
                   Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(asStr(pData['name']), style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.w900, color: C.t1)),
+                      Text(asStr(_data['name']), style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.w900, color: C.t1)),
                       const SizedBox(height: 2),
-                      Text(asStr(asMap(pData['category'])['name'], 'Garden Care'), style: p(13, w: FontWeight.w600, color: C.forest.withOpacity(0.65))),
+                      Text(asStr(asMap(_data['category'])['name'], 'Garden Care'), style: p(13, w: FontWeight.w600, color: C.forest.withOpacity(0.65))),
                     ])),
                     const SizedBox(width: 12),
                     Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                      Text('₹${asDouble(pData['price']).toStringAsFixed(0)}', style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.w900, color: C.green)),
-                      if (asDouble(pData['mrp']) > asDouble(pData['price']))
-                        Text('₹${asDouble(pData['mrp']).toStringAsFixed(0)}', style: const TextStyle(decoration: TextDecoration.lineThrough, decorationColor: Color(0xFF9AAA94), color: Color(0xFF9AAA94), fontSize: 12, fontWeight: FontWeight.w600)),
+                      Text('₹${price.toStringAsFixed(0)}', style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.w900, color: C.green)),
+                      if (mrp > price)
+                        Text('₹${mrp.toStringAsFixed(0)}', style: const TextStyle(decoration: TextDecoration.lineThrough, decorationColor: Color(0xFF9AAA94), color: Color(0xFF9AAA94), fontSize: 12, fontWeight: FontWeight.w600)),
                     ]),
                   ]),
+
+                  // Rating + discount row
+                  if (rating > 0 || discount > 0) Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Row(children: [
+                      if (rating > 0) ...[
+                        const Icon(Icons.star_rounded, size: 15, color: Color(0xFFC69328)),
+                        const SizedBox(width: 3),
+                        Text(rating.toStringAsFixed(1), style: p(12.5, w: FontWeight.w800, color: C.t1)),
+                        if (reviewCount > 0) ...[
+                          const SizedBox(width: 3),
+                          Text('($reviewCount)', style: p(11.5, color: C.t4)),
+                        ],
+                      ],
+                      if (rating > 0 && discount > 0) Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Container(width: 3, height: 3, decoration: const BoxDecoration(color: C.t4, shape: BoxShape.circle))),
+                      if (discount > 0) Text('$discount% off', style: p(12.5, w: FontWeight.w700, color: C.green)),
+                    ]),
+                  ),
+
+                  // Stock status
+                  if (stock != null) Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(outOfStock ? Icons.remove_circle_outline_rounded : Icons.check_circle_outline_rounded, size: 14, color: outOfStock ? C.red : C.green),
+                      const SizedBox(width: 5),
+                      Text(outOfStock ? 'Out of stock' : (stock <= 5 ? 'Only $stock left' : 'In stock'), style: p(12, w: FontWeight.w700, color: outOfStock ? C.red : (stock <= 5 ? Colors.orange.shade800 : C.green))),
+                    ]),
+                  ),
+
                   const SizedBox(height: 16),
                   const Divider(height: 1, color: Color(0xFFEEF4EA)),
                   const SizedBox(height: 16),
 
-                  // Description
+                  // Description — prefers the full long_description once loaded
                   Text('Product Details', style: p(14, w: FontWeight.w800, color: C.t1)),
                   const SizedBox(height: 6),
                   Text(
-                    asStr(pData['description'], 'This premium gardening product is designed to keep your garden healthy and vibrant.'),
+                    longDesc.isNotEmpty ? longDesc : asStr(_data['description'], 'This premium gardening product is designed to keep your garden healthy and vibrant.'),
                     style: p(13, color: C.t3, h: 1.6),
                   ),
-                  if (pData['specifications'] != null) ...[
-                    const SizedBox(height: 14),
-                    Text('Specifications', style: p(14, w: FontWeight.w800, color: C.t1)),
-                    const SizedBox(height: 6),
-                    Text(asStr(pData['specifications']), style: p(13, color: C.t3)),
+
+                  // Features — clean checklist, not colorful chips
+                  if (features.isNotEmpty) ...[
+                    const SizedBox(height: 22),
+                    Text('Key Features', style: p(14, w: FontWeight.w800, color: C.t1)),
+                    const SizedBox(height: 10),
+                    ...features.map((f) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Icon(Icons.check_circle_rounded, size: 16, color: C.forest.withOpacity(0.75)),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text(f, style: p(13, color: C.t2, h: 1.4))),
+                      ]),
+                    )),
                   ],
+
+                  // Tags — subtle outlined pills, not bright colors
+                  if (tags.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Wrap(spacing: 8, runSpacing: 8, children: tags.map((t) => Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(borderRadius: BorderRadius.circular(99), border: Border.all(color: C.border)),
+                      child: Text(t, style: p(11, w: FontWeight.w600, color: C.t3)),
+                    )).toList()),
+                  ],
+
+                  // FAQs — expandable, understated
+                  if (faqs.isNotEmpty) ...[
+                    const SizedBox(height: 22),
+                    Text('Questions & Answers', style: p(14, w: FontWeight.w800, color: C.t1)),
+                    const SizedBox(height: 10),
+                    ...List.generate(faqs.length, (i) {
+                      final open = _faqOpen.contains(i);
+                      final q = asStr(faqs[i]['q']);
+                      final a = asStr(faqs[i]['a']);
+                      if (q.isEmpty) return const SizedBox.shrink();
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        decoration: BoxDecoration(border: Border.all(color: C.border), borderRadius: BorderRadius.circular(14)),
+                        child: Column(children: [
+                          GestureDetector(
+                            onTap: () => setState(() => open ? _faqOpen.remove(i) : _faqOpen.add(i)),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                              child: Row(children: [
+                                Expanded(child: Text(q, style: p(12.5, w: FontWeight.w700, color: C.t1))),
+                                Icon(open ? Icons.remove_rounded : Icons.add_rounded, size: 18, color: C.t3),
+                              ]),
+                            ),
+                          ),
+                          if (open) Padding(
+                            padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                            child: Align(alignment: Alignment.centerLeft, child: Text(a, style: p(12, color: C.t3, h: 1.5))),
+                          ),
+                        ]),
+                      );
+                    }),
+                  ],
+
+                  if (_loadingFull) Padding(
+                    padding: const EdgeInsets.only(top: 20),
+                    child: Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: C.forest.withOpacity(0.4)))),
+                  ),
+
                   const SizedBox(height: 24),
                 ]),
               ),
@@ -536,7 +676,7 @@ class _ProductDetails extends StatelessWidget {
             border: const Border(top: BorderSide(color: Color(0xFFEEF4EA))),
             boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 16, offset: const Offset(0, -6))],
           ),
-          child: GBtn(label: 'Add to Cart', onTap: () { onAdd(); Navigator.pop(ctx); }, bg: C.forest),
+          child: GBtn(label: outOfStock ? 'Out of Stock' : 'Add to Cart', onTap: outOfStock ? null : () { widget.onAdd(); Navigator.pop(ctx); }, bg: C.forest),
         ),
       ]),
     );

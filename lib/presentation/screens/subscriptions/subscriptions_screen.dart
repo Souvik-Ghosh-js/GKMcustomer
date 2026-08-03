@@ -100,7 +100,7 @@ class _SubsState extends State<SubscriptionsScreen> {
               Text('Manage your garden plans', style: p(11, color: Colors.white60)),
             ])),
             GestureDetector(
-              onTap: () => Navigator.pushNamed(ctx, '/book'),
+              onTap: () => Navigator.pushNamed(ctx, '/plans'),
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
@@ -119,7 +119,7 @@ class _SubsState extends State<SubscriptionsScreen> {
                 title: 'No subscriptions yet',
                 sub: 'Subscribe to a monthly garden care plan and never worry about your plants again',
                 icon: Icons.card_membership_outlined,
-                action: GBtn(label: 'Browse Plans', onTap: () => Navigator.pushNamed(ctx, '/book'), w: 180, h: 44))])
+                action: GBtn(label: 'Browse Plans', onTap: () => Navigator.pushNamed(ctx, '/plans'), w: 180, h: 44))])
             : ListView.builder(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
                 itemCount: _subs.length,

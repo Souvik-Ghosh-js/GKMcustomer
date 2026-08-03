@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -68,33 +70,48 @@ class _HomeState extends State<HomeScreen> {
   @override
   Widget build(BuildContext ctx) {
     final cart = ctx.watch<CartProvider>();
-    final heroH = MediaQuery.of(ctx).size.height * 0.30;
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: Stack(children: [
-        RefreshIndicator(
-          onRefresh: _loadAll, color: C.forest,
-          child: CustomScrollView(controller: _scrollCtrl, slivers: [
-            _buildHeroSliver(ctx, heroH),
-            SliverToBoxAdapter(child: Column(children: [
-              const SizedBox(height: 24),
-              _buildTwoColumnCards(ctx),
-              const SizedBox(height: 40),
-              _buildQuickActions(ctx),
-              const SizedBox(height: 40),
-              _buildShopSection(ctx),
-              const SizedBox(height: 40),
-              _buildPlansSection(ctx),
-              const SizedBox(height: 40),
-              _buildPromotionsSection(ctx),
-              const SizedBox(height: 32),
-              _buildFooter(ctx),
-              const SizedBox(height: 28),
-            ])),
-          ]),
-        ),
-        if (cart.count > 0) _buildCartBar(ctx, cart.count, cart.total),
-      ]),
+    // Banner art is a 3:2 (1200x800) image — size the hero to that exact
+    // ratio against the screen width so it fits with no crop/distortion,
+    // instead of a fixed 30%-of-height box that clipped the banner content.
+    final heroH = MediaQuery.of(ctx).size.width * (2 / 3);
+    // Status bar keeps a solid, readable background matched to whatever's
+    // behind it — dark scrim over the hero image, solid white once scrolled
+    // past — instead of staying transparent throughout the scroll.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: _navCollapsed
+        ? const SystemUiOverlayStyle(statusBarColor: Colors.white, statusBarIconBrightness: Brightness.dark, statusBarBrightness: Brightness.light)
+        : const SystemUiOverlayStyle(statusBarColor: Colors.black26, statusBarIconBrightness: Brightness.light, statusBarBrightness: Brightness.dark),
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: Stack(children: [
+          RefreshIndicator(
+            onRefresh: _loadAll, color: C.forest,
+            child: CustomScrollView(controller: _scrollCtrl, slivers: [
+              _buildHeroSliver(ctx, heroH),
+              SliverToBoxAdapter(child: Column(children: [
+                const SizedBox(height: 24),
+                _buildTwoColumnCards(ctx),
+                const SizedBox(height: 40),
+                _buildServicesSection(ctx),
+                const SizedBox(height: 40),
+                _buildQuickActions(ctx),
+                const SizedBox(height: 40),
+                _buildShopSection(ctx),
+                const SizedBox(height: 40),
+                _buildPlansSection(ctx),
+                const SizedBox(height: 40),
+                _buildWhyChooseSection(ctx),
+                const SizedBox(height: 40),
+                _buildPromotionsSection(ctx),
+                const SizedBox(height: 32),
+                _buildFooter(ctx),
+                const SizedBox(height: 28),
+              ])),
+            ]),
+          ),
+          if (cart.count > 0) _buildCartBar(ctx, cart.count, cart.total),
+        ]),
+      ),
     );
   }
 
@@ -170,15 +187,13 @@ class _HomeState extends State<HomeScreen> {
     );
   }
 
-  // ── Hero image slider — fills the flexible space above ─────────────────────
+  // ── Hero image slider — fills the flexible space above; tap goes to booking ──
   Widget _buildHeroSlider(BuildContext ctx) => _HeroSlider(
     images: const [
-      'assets/images/marketting-1.jpeg',
-      'assets/images/marketting-2.jpeg',
-      'assets/images/marketting-3.jpeg',
-      'assets/images/marketting-4.jpeg',
-      'assets/images/marketting-5.jpeg',
+      'assets/images/banner-1.png',
+      'assets/images/banner-2.png',
     ],
+    onTap: () => Navigator.pushNamed(ctx, '/book'),
   );
 
   // ── Two light, premium action cards ─────────────────────────────────────
@@ -207,6 +222,144 @@ class _HomeState extends State<HomeScreen> {
     ]),
   );
 
+  // ── Our Services — horizontal scroll of premium service cards ──────────
+  static const _services = [
+    (icon: Icons.bolt_rounded, title: 'Mali on Demand', desc: 'Book a professional gardener for one-time maintenance, pruning, repotting, soil replacement, cleaning, and general plant care.'),
+    (icon: Icons.event_repeat_rounded, title: 'Monthly Garden Maintenance', desc: 'Keep your garden thriving with scheduled maintenance visits by experienced gardeners.'),
+    (icon: Icons.balcony_rounded, title: 'Balcony & Terrace Garden Setup', desc: 'Transform your balcony or terrace into a lush green oasis with customized garden designs.'),
+    (icon: Icons.local_florist_rounded, title: 'Plants & Pots', desc: 'Choose from a wide range of indoor plants, outdoor plants, flowering plants, ornamental plants, planters, and premium pots.'),
+    (icon: Icons.auto_awesome_rounded, title: 'Garden Makeovers', desc: 'Complete landscaping and makeover solutions for homes, villas, apartments, offices, and commercial spaces.'),
+    (icon: Icons.grass_rounded, title: 'Lawn Care', desc: 'Professional lawn maintenance including mowing, trimming, fertilizing, and seasonal care.'),
+    (icon: Icons.pest_control_rounded, title: 'Pest & Disease Management', desc: 'Protect your plants with safe and effective pest control and plant health treatments.'),
+    (icon: Icons.eco_rounded, title: 'Soil, Compost & Gardening Essentials', desc: 'Order premium compost, potting mix, fertilizers, gardening tools, and other essentials.'),
+  ];
+
+  Widget _buildServicesSection(BuildContext ctx) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Our Services', style: p(18, w: FontWeight.w800, color: Colors.black)),
+          const SizedBox(height: 4),
+          Text('Everything your garden needs, in one place', style: p(12, color: Colors.black45, h: 1.4)),
+        ]),
+      ),
+      const SizedBox(height: 16),
+      SizedBox(
+        height: 190,
+        child: ListView.builder(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+          itemCount: _services.length,
+          itemBuilder: (_, i) {
+            final s = _services[i];
+            return Container(
+              width: 200,
+              margin: const EdgeInsets.only(right: 14),
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: Colors.black.withOpacity(0.05)),
+                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 14, offset: const Offset(0, 6))],
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Container(
+                  width: 44, height: 44,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [C.forest3, C.forest], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(s.icon, color: C.gold, size: 22),
+                ),
+                const SizedBox(height: 12),
+                Text(s.title, style: GoogleFonts.poppins(fontSize: 13.5, fontWeight: FontWeight.w800, color: C.t1, height: 1.25), maxLines: 2, overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 6),
+                Expanded(child: Text(s.desc, style: p(10.5, color: C.t3, h: 1.35), maxLines: 4, overflow: TextOverflow.ellipsis)),
+              ]),
+            );
+          },
+        ),
+      ),
+    ],
+  );
+
+  // ── Why Choose GharKaMali — trust points, icon + text cards ─────────────
+  static const _whyChoosePoints = [
+    (icon: Icons.verified_user_rounded, title: 'Verified Professionals', desc: 'Trained and verified gardening professionals'),
+    (icon: Icons.touch_app_rounded, title: 'Easy Booking', desc: 'Simple, fast online booking in a few taps'),
+    (icon: Icons.price_check_rounded, title: 'Transparent Pricing', desc: 'No hidden charges, know the cost upfront'),
+    (icon: Icons.event_available_rounded, title: 'Flexible Scheduling', desc: 'Book visits that fit around your schedule'),
+    (icon: Icons.local_florist_rounded, title: 'Quality Plants & Materials', desc: 'High-quality plants and garden materials'),
+    (icon: Icons.support_agent_rounded, title: 'Reliable Support', desc: 'Responsive customer support when you need it'),
+    (icon: Icons.eco_rounded, title: 'Expert Consultation', desc: 'Professional garden consultation from specialists'),
+    (icon: Icons.workspace_premium_rounded, title: 'End-to-End Solutions', desc: 'Complete gardening solutions, start to finish'),
+  ];
+
+  Widget _buildWhyChooseSection(BuildContext ctx) => Container(
+    margin: const EdgeInsets.symmetric(horizontal: 16),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(28),
+      border: Border.all(color: Colors.black.withOpacity(0.05)),
+      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 24, offset: const Offset(0, 10))],
+    ),
+    child: Column(children: [
+      // ── Header band ──────────────────────────────────────────────────
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(24, 26, 24, 24),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(colors: [C.forest3, C.forest], begin: Alignment.topLeft, end: Alignment.bottomRight),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(color: C.gold.withOpacity(0.16), borderRadius: BorderRadius.circular(8), border: Border.all(color: C.gold.withOpacity(0.4))),
+            child: Text('TRUSTED BY THOUSANDS', style: GoogleFonts.poppins(fontSize: 9.5, fontWeight: FontWeight.w800, color: C.gold, letterSpacing: 0.8)),
+          ),
+          const SizedBox(height: 14),
+          Text('Why Choose\nGharKaMali?', style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.w800, color: Colors.white, height: 1.2)),
+          const SizedBox(height: 6),
+          Text('The trusted way to care for your garden', style: p(12.5, color: Colors.white60)),
+        ]),
+      ),
+      // ── Point rows ───────────────────────────────────────────────────
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+        child: Column(children: List.generate(_whyChoosePoints.length, (i) {
+          final pt = _whyChoosePoints[i];
+          final isLast = i == _whyChoosePoints.length - 1;
+          return Container(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            decoration: BoxDecoration(
+              border: isLast ? null : const Border(bottom: BorderSide(color: Color(0xFFF0F3EE), width: 1)),
+            ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Container(
+                width: 42, height: 42,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: C.forest.withOpacity(0.07),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Icon(pt.icon, size: 20, color: C.forest),
+              ),
+              const SizedBox(width: 14),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(pt.title, style: GoogleFonts.poppins(fontSize: 14.5, fontWeight: FontWeight.w700, color: C.t1, height: 1.3)),
+                const SizedBox(height: 3),
+                Text(pt.desc, style: p(12.5, color: C.t3, h: 1.45)),
+              ])),
+            ]),
+          );
+        })),
+      ),
+    ]),
+  );
+
   // ── Company footer ─────────────────────────────────────────────────────
   Widget _buildFooter(BuildContext ctx) => Center(child: Column(children: [
     Image.asset('assets/images/logo-colored.png', height: 46, fit: BoxFit.contain),
@@ -214,25 +367,27 @@ class _HomeState extends State<HomeScreen> {
     Text('© Plantura Care Pvt Ltd', style: p(11, color: C.t4)),
   ]));
 
-  Widget _buildQuickActions(BuildContext ctx) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-       Text('Explore GKM', style: p(18, w: FontWeight.w800, color: Colors.black)),
-       const SizedBox(height: 16),
-       GridView.count(
-         shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
-         crossAxisCount: 3, crossAxisSpacing: 12, mainAxisSpacing: 18,
-         childAspectRatio: 0.82,
-         children: [
-            _Feature(icon: Icons.yard_rounded, title: 'Plantopedia', comingSoon: true, onTap: () => widget.navTo(3)),
-            _Feature(icon: Icons.auto_awesome, title: 'Makeover', onTap: () => Navigator.pushNamed(ctx, '/green-makeover')),
-            _Feature(icon: Icons.shopping_bag_rounded, title: 'My Orders', onTap: () => Navigator.pushNamed(ctx, '/shop/orders')),
-            _Feature(icon: Icons.support_agent_rounded, title: 'Support', onTap: () => Navigator.pushNamed(ctx, '/complaints')),
-            _Feature(icon: Icons.local_florist_rounded, title: 'Shop', onTap: () => widget.navTo(2)),
-            _Feature(icon: Icons.notifications_none_rounded, title: 'Notifications', onTap: () => Navigator.pushNamed(ctx, '/notifications')),
-         ],
-       ),
-    ]),
+  Widget _buildQuickActions(BuildContext ctx) => _AnimatedExploreBackground(
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+         Text('Explore GKM', style: p(18, w: FontWeight.w800, color: Colors.black)),
+         const SizedBox(height: 16),
+         GridView.count(
+           shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+           crossAxisCount: 3, crossAxisSpacing: 12, mainAxisSpacing: 18,
+           childAspectRatio: 0.82,
+           children: [
+              _Feature(icon: Icons.yard_rounded, title: 'Plantopedia', comingSoon: true, onTap: () => widget.navTo(3)),
+              _Feature(icon: Icons.auto_awesome, title: 'Makeover', onTap: () => Navigator.pushNamed(ctx, '/green-makeover')),
+              _Feature(icon: Icons.card_membership_rounded, title: 'Plans', onTap: () => Navigator.pushNamed(ctx, '/plans')),
+              _Feature(icon: Icons.support_agent_rounded, title: 'Support', onTap: () => Navigator.pushNamed(ctx, '/complaints')),
+              _Feature(icon: Icons.local_florist_rounded, title: 'Shop', onTap: () => widget.navTo(2)),
+              _Feature(icon: Icons.shopping_bag_rounded, title: 'My Orders', onTap: () => Navigator.pushNamed(ctx, '/shop/orders')),
+           ],
+         ),
+      ]),
+    ),
   );
 
   Widget _buildShopSection(BuildContext ctx) => Column(
@@ -290,7 +445,8 @@ class _HomeState extends State<HomeScreen> {
 // Fills whatever space its parent (SliverAppBar's FlexibleSpaceBar) gives it.
 class _HeroSlider extends StatefulWidget {
   final List<String> images;
-  const _HeroSlider({required this.images});
+  final VoidCallback? onTap;
+  const _HeroSlider({required this.images, this.onTap});
   @override State<_HeroSlider> createState() => _HeroSliderState();
 }
 
@@ -325,10 +481,13 @@ class _HeroSliderState extends State<_HeroSlider> {
         controller: _pageCtrl,
         itemCount: widget.images.length,
         onPageChanged: (i) => setState(() => _current = i),
-        itemBuilder: (_, i) => Image.asset(
-          widget.images[i],
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => Container(color: C.subtle, child: const Center(child: Icon(Icons.image_rounded, color: Colors.black26, size: 40))),
+        itemBuilder: (_, i) => GestureDetector(
+          onTap: widget.onTap,
+          child: Image.asset(
+            widget.images[i],
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Container(color: C.subtle, child: const Center(child: Icon(Icons.image_rounded, color: Colors.black26, size: 40))),
+          ),
         ),
       ),
       // Top scrim so the overlaid nav (white icons/text) stays readable on bright images.
@@ -509,6 +668,10 @@ class _HotstarPlansCarouselState extends State<_HotstarPlansCarousel> {
               const SizedBox(height: 4),
               Text('Tailored gardening subscriptions', style: p(12, color: Colors.black45, h: 1.4)),
             ])),
+            TextButton(
+              onPressed: () => Navigator.pushNamed(context, '/plans'),
+              child: Text('See all', style: p(13, w: FontWeight.w700, color: C.forest)),
+            ),
             // Position counter (scales to any number of plans, unlike a dot row)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -818,9 +981,9 @@ class _PromotionsCarouselState extends State<_PromotionsCarousel> {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text("Why Choose GharKaMali?", style: p(18, w: FontWeight.w800, color: Colors.black)),
+            Text('Offers & Highlights', style: p(18, w: FontWeight.w800, color: Colors.black)),
             const SizedBox(height: 4),
-            Text('Offers & highlights from GharKaMali', style: p(12, color: Colors.black45, h: 1.4)),
+            Text('Latest deals from GharKaMali', style: p(12, color: Colors.black45, h: 1.4)),
           ]),
         ),
         const SizedBox(height: 18),
@@ -920,37 +1083,106 @@ class _Feature extends StatelessWidget {
   Widget build(BuildContext ctx) => GestureDetector(
     onTap: onTap,
     child: Column(mainAxisSize: MainAxisSize.min, children: [
-      if (comingSoon) ...[
-        Text('COMING SOON', style: GoogleFonts.poppins(fontSize: 8, fontWeight: FontWeight.w900, color: C.gold, letterSpacing: 0.6))
-          .animate(onPlay: (c) => c.repeat())
-          .shimmer(duration: 1600.ms, color: Colors.white),
-        const SizedBox(height: 6),
-      ],
-      ClipRRect(
-        borderRadius: BorderRadius.circular(22),
-        child: SizedBox(
-          width: 72, height: 72,
-          child: Stack(alignment: Alignment.center, children: [
-            Container(color: const Color(0xFFF8F8F8)),
-            Icon(icon, color: C.forest, size: 34),
-            Positioned.fill(
-              child: ShaderMask(
-                blendMode: BlendMode.srcATop,
-                shaderCallback: (rect) => LinearGradient(
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                  colors: [Colors.transparent, Colors.white.withOpacity(0.85), Colors.transparent],
-                  stops: const [0.35, 0.5, 0.65],
-                ).createShader(rect),
-                child: Icon(icon, color: C.forest, size: 34),
-              ).animate(onPlay: (c) => c.repeat())
-               .shimmer(duration: 1300.ms, delay: 800.ms, color: Colors.white.withOpacity(0.7)),
+      SizedBox(
+        // Fixed height (badge included) so every grid cell lines up regardless
+        // of whether it carries a "COMING SOON" badge or not.
+        width: 72, height: 84,
+        child: Stack(clipBehavior: Clip.none, alignment: Alignment.bottomCenter, children: [
+          Positioned(
+            bottom: 0,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(22),
+              child: SizedBox(
+                width: 72, height: 72,
+                child: Stack(alignment: Alignment.center, children: [
+                  Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(colors: [C.forest3, C.forest], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                    ),
+                  ),
+                  Icon(icon, color: C.gold, size: 32),
+                  Positioned.fill(
+                    child: ShaderMask(
+                      blendMode: BlendMode.srcATop,
+                      shaderCallback: (rect) => LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [Colors.transparent, Colors.white.withOpacity(0.85), Colors.transparent],
+                        stops: const [0.35, 0.5, 0.65],
+                      ).createShader(rect),
+                      child: Icon(icon, color: C.gold, size: 32),
+                    ).animate(onPlay: (c) => c.repeat())
+                     .shimmer(duration: 1300.ms, delay: 800.ms, color: Colors.white.withOpacity(0.7)),
+                  ),
+                ]),
+              ),
             ),
-          ]),
-        ),
+          ),
+          if (comingSoon)
+            Positioned(
+              top: 0,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(color: C.forest, borderRadius: BorderRadius.circular(99)),
+                child: Text('SOON', style: GoogleFonts.poppins(fontSize: 7.5, fontWeight: FontWeight.w900, color: C.gold, letterSpacing: 0.6))
+                  .animate(onPlay: (c) => c.repeat())
+                  .shimmer(duration: 1600.ms, color: Colors.white),
+              ),
+            ),
+        ]),
       ),
       const SizedBox(height: 10),
       Text(title, style: p(11, w: FontWeight.w700, color: Colors.black87), textAlign: TextAlign.center),
+    ]),
+  );
+}
+
+// ─── Animated, colourful background wash behind the "Explore GKM" section ────
+class _AnimatedExploreBackground extends StatefulWidget {
+  final Widget child;
+  const _AnimatedExploreBackground({required this.child});
+  @override State<_AnimatedExploreBackground> createState() => _AnimatedExploreBackgroundState();
+}
+
+class _AnimatedExploreBackgroundState extends State<_AnimatedExploreBackground> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(vsync: this, duration: 8.seconds)..repeat();
+
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext ctx) => ClipRect(
+    child: Stack(children: [
+      Positioned.fill(child: Container(color: const Color(0xFFF7FAF6))),
+      // Faint botanical watermarks, barely drifting — a quiet leaf motif
+      // rather than anything that reads as an animated cartoon character.
+      AnimatedBuilder(
+        animation: _ctrl,
+        builder: (_, __) {
+          final t = _ctrl.value * 2 * 3.14159;
+          return Positioned(
+            left: -30, top: -30 + 6 * math.sin(t),
+            child: Transform.rotate(
+              angle: -0.35 + 0.02 * math.sin(t),
+              child: Icon(Icons.eco_rounded, size: 190, color: C.forest.withOpacity(0.06)),
+            ),
+          );
+        },
+      ),
+      AnimatedBuilder(
+        animation: _ctrl,
+        builder: (_, __) {
+          final t = _ctrl.value * 2 * 3.14159;
+          return Positioned(
+            right: -36, bottom: -36 + 6 * math.cos(t),
+            child: Transform.rotate(
+              angle: 0.5 + 0.02 * math.cos(t),
+              child: Icon(Icons.local_florist_rounded, size: 210, color: C.gold.withOpacity(0.14)),
+            ),
+          );
+        },
+      ),
+      widget.child,
     ]),
   );
 }
