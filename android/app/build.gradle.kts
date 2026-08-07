@@ -23,6 +23,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Required by flutter_local_notifications (java.time backport).
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -31,7 +33,7 @@ android {
 
     defaultConfig {
         applicationId = "in.gobt.gharkamali"
-        minSdk = flutter.minSdkVersion
+        minSdk = maxOf(flutter.minSdkVersion, 21) // FCM requires >= 21
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -61,4 +63,11 @@ flutter {
 
 dependencies {
     implementation("androidx.concurrent:concurrent-futures:1.1.0")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+}
+
+// Firebase (google-services) — applied only when the config file exists so the
+// app still builds before Firebase is set up. See FIREBASE_SETUP.md.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }

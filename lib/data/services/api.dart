@@ -138,9 +138,13 @@ class Api {
   Future<dynamic> sendOtp(String phone) =>
       req('POST', '/auth/send-otp', auth: false, body: {'phone': phone});
 
-  Future<dynamic> verifyOtp(String phone, String otp, {String? name}) async {
+  Future<dynamic> verifyOtp(String phone, String otp, {String? name, String? fcmToken}) async {
     final res = await req('POST', '/auth/verify-otp', auth: false,
-        body: {'phone': phone, 'otp': otp, if (name != null && name.isNotEmpty) 'name': name});
+        body: {
+          'phone': phone, 'otp': otp,
+          if (name != null && name.isNotEmpty) 'name': name,
+          if (fcmToken != null && fcmToken.isNotEmpty) 'fcm_token': fcmToken,
+        });
     if (res is Map && res.containsKey('token') && res['requires_name'] != true) {
       final p = await SharedPreferences.getInstance();
       await p.setString(kTokKey, asStr(res['token']));
@@ -150,6 +154,9 @@ class Api {
   }
 
   Future<dynamic> getProfile() => req('GET', '/auth/profile');
+
+  Future<dynamic> updateFcmToken(String fcmToken) =>
+      req('POST', '/auth/update-fcm-token', body: {'fcm_token': fcmToken});
 
   Future<dynamic> updateProfile({String? name, String? email, File? profileImage}) =>
       upload('PUT', '/auth/profile',

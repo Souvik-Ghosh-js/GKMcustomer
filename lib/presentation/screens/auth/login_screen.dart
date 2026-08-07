@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import '../../../data/services/api.dart';
+import '../../../data/services/push_service.dart';
 import '../../../utils/validators.dart';
 import '../../theme/theme.dart';
 import '../../widgets/widgets.dart';
@@ -65,7 +66,8 @@ class _LoginState extends State<LoginScreen> {
     final p = Validators.normalizePhone(_phoneCtrl.text);
     setState(() => _busy = true);
     try {
-      final res = await _api.verifyOtp(p, code);
+      final res = await _api.verifyOtp(p, code,
+          fcmToken: await PushService.instance.getToken());
       if (!mounted) return;
       if (res is Map && res['requires_name'] == true) {
         setState(() {
@@ -91,7 +93,8 @@ class _LoginState extends State<LoginScreen> {
     try {
       final p = Validators.normalizePhone(_phoneCtrl.text);
       final code = _otpCtrls.map((c) => c.text).join();
-      await _api.verifyOtp(p, code, name: n);
+      await _api.verifyOtp(p, code, name: n,
+          fcmToken: await PushService.instance.getToken());
       if (mounted) widget.onLoggedIn();
     } on ApiError catch (e) {
       if (mounted) {
