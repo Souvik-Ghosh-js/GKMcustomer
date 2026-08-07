@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'data/services/auth.dart';
 import 'data/services/location_provider.dart';
 import 'data/services/cart_provider.dart';
+import 'data/services/push_service.dart';
 import 'presentation/theme/theme.dart';
 import 'presentation/widgets/widgets.dart';
 import 'presentation/screens/auth/login_screen.dart';
@@ -34,6 +35,9 @@ void main() {
     systemNavigationBarIconBrightness: Brightness.dark,
   ));
   Animate.restartOnHotReload = true;
+  // Push notifications — no-op when Firebase isn't configured yet. After init,
+  // re-sync the FCM token to the backend if a session already exists.
+  PushService.instance.init().then((_) => PushService.instance.syncTokenIfLoggedIn());
   runApp(MultiProvider(providers: [
     ChangeNotifierProvider(create: (_) => AuthProvider()),
     ChangeNotifierProvider(create: (_) => LocationProvider()),
@@ -47,6 +51,7 @@ class GkmApp extends StatelessWidget {
   @override
   Widget build(BuildContext ctx) => MaterialApp(
         title: 'Ghar Ka Mali',
+        navigatorKey: rootNavigatorKey,
         debugShowCheckedModeBanner: false,
         theme: AT.light,
         home: const _Root(),

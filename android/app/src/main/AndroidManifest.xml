@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application android:label="GharKaMali" android:name="${applicationName}" android:icon="@mipmap/ic_launcher">
         <!-- Google Maps Android API key — replace the value with your Android-restricted key -->
         <meta-data android:name="com.google.android.geo.API_KEY" android:value="AIzaSyDIR7WEJoxM7do0k3vWqL__CcSP2JgOrq8"/>
