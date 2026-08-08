@@ -239,10 +239,16 @@ class _HomeState extends State<HomeScreen> {
     children: [
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Our Services', style: p(18, w: FontWeight.w800, color: Colors.black)),
-          const SizedBox(height: 4),
-          Text('Everything your garden needs, in one place', style: p(12, color: Colors.black45, h: 1.4)),
+        child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Our Services', style: p(18, w: FontWeight.w800, color: Colors.black)),
+            const SizedBox(height: 4),
+            Text('Everything your garden needs, in one place', style: p(12, color: Colors.black45, h: 1.4)),
+          ])),
+          TextButton(
+            onPressed: () => Navigator.pushNamed(ctx, '/services'),
+            child: Text('See all', style: p(13, w: FontWeight.w700, color: C.forest)),
+          ),
         ]),
       ),
       const SizedBox(height: 16),
@@ -254,30 +260,33 @@ class _HomeState extends State<HomeScreen> {
           itemCount: _services.length,
           itemBuilder: (_, i) {
             final s = _services[i];
-            return Container(
-              width: 200,
-              margin: const EdgeInsets.only(right: 14),
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: Colors.black.withOpacity(0.05)),
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 14, offset: const Offset(0, 6))],
-              ),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Container(
-                  width: 44, height: 44,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [C.forest3, C.forest], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(s.icon, color: C.gold, size: 22),
+            return GestureDetector(
+              onTap: () => Navigator.pushNamed(ctx, '/services'),
+              child: Container(
+                width: 200,
+                margin: const EdgeInsets.only(right: 14),
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: Colors.black.withOpacity(0.05)),
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 14, offset: const Offset(0, 6))],
                 ),
-                const SizedBox(height: 12),
-                Text(s.title, style: GoogleFonts.poppins(fontSize: 13.5, fontWeight: FontWeight.w800, color: C.t1, height: 1.25), maxLines: 2, overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 6),
-                Expanded(child: Text(s.desc, style: p(10.5, color: C.t3, h: 1.35), maxLines: 4, overflow: TextOverflow.ellipsis)),
-              ]),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Container(
+                    width: 44, height: 44,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(colors: [C.forest3, C.forest], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(s.icon, color: C.gold, size: 22),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(s.title, style: GoogleFonts.poppins(fontSize: 13.5, fontWeight: FontWeight.w800, color: C.t1, height: 1.25), maxLines: 2, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 6),
+                  Expanded(child: Text(s.desc, style: p(10.5, color: C.t3, h: 1.35), maxLines: 4, overflow: TextOverflow.ellipsis)),
+                ]),
+              ),
             );
           },
         ),
@@ -381,6 +390,7 @@ class _HomeState extends State<HomeScreen> {
               _Feature(icon: Icons.yard_rounded, title: 'Plantopedia', comingSoon: true, onTap: () => widget.navTo(3)),
               _Feature(icon: Icons.auto_awesome, title: 'Makeover', onTap: () => Navigator.pushNamed(ctx, '/green-makeover')),
               _Feature(icon: Icons.card_membership_rounded, title: 'Plans', onTap: () => Navigator.pushNamed(ctx, '/plans')),
+              _Feature(icon: Icons.spa_rounded, title: 'Services', onTap: () => Navigator.pushNamed(ctx, '/services')),
               _Feature(icon: Icons.support_agent_rounded, title: 'Support', onTap: () => Navigator.pushNamed(ctx, '/complaints')),
               _Feature(icon: Icons.local_florist_rounded, title: 'Shop', onTap: () => widget.navTo(2)),
               _Feature(icon: Icons.shopping_bag_rounded, title: 'My Orders', onTap: () => Navigator.pushNamed(ctx, '/shop/orders')),
