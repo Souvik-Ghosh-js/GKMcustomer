@@ -354,12 +354,14 @@ class _BookState extends State<BookScreen> {
     return AnimatedSwitcher(duration: 300.ms, child: _buildStep());
   }
 
+  bool get _isAnnualPlan => _isSub && asInt(_selectedPlan?['duration_days']) >= 300;
+
   Widget _buildBottomNav(BuildContext ctx) => Container(
     padding: EdgeInsets.fromLTRB(24, 16, 24, MediaQuery.of(ctx).padding.bottom + 16),
     decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20, offset: const Offset(0, -10))]),
     child: _stepIdx < _lastStep
       ? GBtn(label: 'Continue', icon: Icons.arrow_forward_rounded, onTap: _canNext() ? _goNext : null, bg: C.forest)
-      : GBtn(label: _isSub ? 'Subscribe — ₹${_total.toStringAsFixed(0)}/mo' : 'Confirm Booking — ₹${_total.toStringAsFixed(0)}', bg: C.forest, loading: _submitting, onTap: _submit),
+      : GBtn(label: _isSub ? 'Subscribe — ₹${_total.toStringAsFixed(0)}${_isAnnualPlan ? '/yr' : '/mo'}' : 'Confirm Booking — ₹${_total.toStringAsFixed(0)}', bg: C.forest, loading: _submitting, onTap: _submit),
   );
 
   Widget _buildStep() {
@@ -575,20 +577,92 @@ class _PlanItem extends StatelessWidget {
   final Map<String, dynamic> plan; final bool sel; final VoidCallback onTap;
   final double? displayPrice;
   const _PlanItem({required this.plan, required this.sel, required this.onTap, this.displayPrice});
+
+  // Same billing-cycle derivation as the Plans page — the backend has no
+  // dedicated field, so annual vs monthly comes from duration_days.
+  bool get _isSub => asStr(plan['plan_type']) == 'subscription';
+  bool get _isAnnual => _isSub && asInt(plan['duration_days']) >= 300;
+
   @override
   Widget build(BuildContext ctx) {
-    final isSub = asStr(plan['plan_type']) == 'subscription';
     final shownPrice = displayPrice ?? asDouble(plan['price']);
+    final priceSubtitle = asStr(plan['price_subtitle']).isNotEmpty
+        ? asStr(plan['price_subtitle'])
+        : (_isSub ? (_isAnnual ? '/ year' : '/ month') : '/ visit');
+    final tagline = asStr(plan['tagline']).isNotEmpty
+        ? asStr(plan['tagline'])
+        : asStr(plan['plan_summary'], _isSub ? 'best care' : 'on-demand visit');
+    final visits = asInt(plan['visits_per_month']);
+    final maxPlants = asInt(plan['max_plants']);
+    final features = asList(plan['features']).map((e) => e.toString()).where((s) => s.isNotEmpty).toList();
+    final fg = sel ? Colors.white : Colors.black;
+    final fgMuted = sel ? Colors.white60 : Colors.black38;
+
     return GestureDetector(
       onTap: onTap,
-      child: Container(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: sel ? C.forest : Colors.white, borderRadius: BorderRadius.circular(24), border: Border.all(color: sel ? C.forest : Colors.black.withOpacity(0.08)), boxShadow: [if(sel) BoxShadow(color: C.forest.withOpacity(0.2), blurRadius: 15, offset: const Offset(0, 8))]), child: Row(children: [
-        Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: (sel ? Colors.white : C.forest).withOpacity(0.12), borderRadius: BorderRadius.circular(16)), child: Icon(isSub ? Icons.repeat_rounded : Icons.bolt_rounded, color: sel ? Colors.white : C.forest)),
-        const SizedBox(width: 16),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(asStr(plan['name']), style: p(16, w: FontWeight.w800, color: sel ? Colors.white : Colors.black)), Text('Best for basic maintenance', style: p(12, color: sel ? Colors.white60 : Colors.black38))])),
-        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text('₹${shownPrice.toStringAsFixed(0)}', style: p(18, w: FontWeight.w900, color: sel ? C.gold : C.forest)), Text(isSub ? '/mo' : '/visit', style: p(10, color: sel ? Colors.white54 : Colors.black26))]),
-      ])),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(color: sel ? C.forest : Colors.white, borderRadius: BorderRadius.circular(24), border: Border.all(color: sel ? C.forest : Colors.black.withOpacity(0.08)), boxShadow: [if (sel) BoxShadow(color: C.forest.withOpacity(0.2), blurRadius: 15, offset: const Offset(0, 8))]),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: (sel ? Colors.white : C.forest).withOpacity(0.12), borderRadius: BorderRadius.circular(16)), child: Icon(_isSub ? Icons.repeat_rounded : Icons.bolt_rounded, color: sel ? Colors.white : C.forest)),
+            const SizedBox(width: 16),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(asStr(plan['name']), style: p(16, w: FontWeight.w800, color: fg), maxLines: 1, overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 2),
+              Text(tagline, style: p(12, color: fgMuted), maxLines: 1, overflow: TextOverflow.ellipsis),
+            ])),
+            const SizedBox(width: 8),
+            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text('₹${shownPrice.toStringAsFixed(0)}', style: p(18, w: FontWeight.w900, color: sel ? C.gold : C.forest)),
+              Text(priceSubtitle, style: p(10, color: fgMuted)),
+            ]),
+          ]),
+
+          // ── Plan detail so the customer knows what they're getting ──────
+          if (_isSub && (visits > 0 || maxPlants > 0)) Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: Row(children: [
+              if (visits > 0) _detailPill(Icons.event_repeat_rounded, '$visits visits/mo', sel),
+              if (visits > 0 && maxPlants > 0) const SizedBox(width: 8),
+              if (maxPlants > 0) _detailPill(Icons.spa_rounded, 'up to $maxPlants plants', sel),
+            ]),
+          ),
+          if (features.isNotEmpty) Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Wrap(spacing: 6, runSpacing: 6, children: features.take(4).map((f) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              decoration: BoxDecoration(
+                color: (sel ? Colors.white : C.forest).withOpacity(0.08),
+                borderRadius: BorderRadius.circular(99),
+                border: Border.all(color: (sel ? Colors.white : C.forest).withOpacity(0.16)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.check_rounded, size: 11, color: sel ? C.gold : C.forest),
+                const SizedBox(width: 4),
+                Text(f, style: p(10.5, w: FontWeight.w600, color: fg)),
+              ]),
+            )).toList()),
+          ),
+        ]),
+      ),
     );
   }
+
+  Widget _detailPill(IconData icon, String label, bool sel) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: BoxDecoration(
+      color: (sel ? Colors.white : C.forest).withOpacity(0.10),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: (sel ? Colors.white : C.forest).withOpacity(0.14)),
+    ),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, size: 13, color: sel ? C.gold : C.forest),
+      const SizedBox(width: 5),
+      Text(label, style: p(10.5, w: FontWeight.w700, color: sel ? Colors.white : C.t2)),
+    ]),
+  );
 }
 
 class _CounterBtn extends StatelessWidget {
