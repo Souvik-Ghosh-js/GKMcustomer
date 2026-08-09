@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../../../data/services/api.dart';
+import '../../../data/services/invoice_service.dart';
 import '../../theme/theme.dart';
 import '../../widgets/widgets.dart';
 
@@ -131,6 +132,7 @@ class _SubsState extends State<SubscriptionsScreen> {
                   onCancel: () => _cancel(asInt(_subs[i]['id'])),
                   onSchedule: () => _showSchedule(asMap(_subs[i])),
                   onDetails: () => _showDetails(asMap(_subs[i])),
+                  onInvoice: () => downloadInvoice(context, InvoiceType.subscription, asInt(_subs[i]['id'])),
                 ).animate().fadeIn(delay: Duration(milliseconds: i * 60))
                   .slideY(begin: 0.06, end: 0, delay: Duration(milliseconds: i * 60)),
               ),
@@ -143,9 +145,10 @@ class _SubsState extends State<SubscriptionsScreen> {
 class _SubCard extends StatelessWidget {
   final Map<String, dynamic> sub;
   final bool acting;
-  final VoidCallback onPause, onResume, onCancel, onSchedule, onDetails;
+  final VoidCallback onPause, onResume, onCancel, onSchedule, onDetails, onInvoice;
   const _SubCard({required this.sub, required this.acting, required this.onPause,
-    required this.onResume, required this.onCancel, required this.onSchedule, required this.onDetails});
+    required this.onResume, required this.onCancel, required this.onSchedule, required this.onDetails,
+    required this.onInvoice});
 
   @override
   Widget build(BuildContext ctx) {
@@ -234,6 +237,8 @@ class _SubCard extends StatelessWidget {
             if (isPaused)
               _ActionBtn(label: 'Resume', icon: Icons.play_arrow_rounded, primary: true, onTap: acting ? null : onResume),
             _ActionBtn(label: 'View Visits', icon: Icons.list_alt_rounded, onTap: onDetails),
+            if (!['cancelled', 'failed'].contains(status))
+              _ActionBtn(label: 'Invoice', icon: Icons.receipt_long_rounded, onTap: onInvoice),
             if (isActive || isPaused)
               _ActionBtn(label: 'Cancel', icon: Icons.close_rounded, danger: true, onTap: acting ? null : onCancel),
           ]),

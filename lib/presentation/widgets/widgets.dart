@@ -5,7 +5,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../data/services/api.dart';
+import '../../data/services/auth.dart';
 import '../../data/services/cart_provider.dart';
+import '../../data/services/wishlist_provider.dart';
 import '../theme/theme.dart';
 export 'location_picker_sheet.dart';
 
@@ -404,6 +406,23 @@ class _GFloatingCartBarState extends State<GFloatingCartBar> {
         ),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           if (_expanded) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+              child: Row(children: [
+                Expanded(child: Text('YOUR CART', style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.w800, color: Colors.white70, letterSpacing: 0.8))),
+                GestureDetector(
+                  onTap: () {
+                    HapticFeedback.lightImpact();
+                    ctx.read<CartProvider>().clear();
+                    showMsg(ctx, 'Cart cleared');
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Text('Clear cart', style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w700, color: C.gold)),
+                  ),
+                ),
+              ]),
+            ),
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 220),
               child: cart.items.isEmpty
@@ -446,6 +465,20 @@ class _GFloatingCartBarState extends State<GFloatingCartBar> {
                               width: 26, height: 26, alignment: Alignment.center,
                               decoration: BoxDecoration(color: Colors.white.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
                               child: const Icon(Icons.add_rounded, size: 15, color: Colors.white),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // Remove the whole line, regardless of quantity
+                          GestureDetector(
+                            onTap: () {
+                              HapticFeedback.lightImpact();
+                              ctx.read<CartProvider>().removeLine(id);
+                              showMsg(ctx, '${asStr(prod['name'])} removed from cart');
+                            },
+                            child: Container(
+                              width: 26, height: 26, alignment: Alignment.center,
+                              decoration: BoxDecoration(color: C.red.withValues(alpha: 0.25), borderRadius: BorderRadius.circular(8)),
+                              child: const Icon(Icons.close_rounded, size: 15, color: Colors.white),
                             ),
                           ),
                         ]),
@@ -498,6 +531,45 @@ class _GFloatingCartBarState extends State<GFloatingCartBar> {
         ]),
       ),
     ).animate().slideY(begin: 1, end: 0, duration: 350.ms, curve: Curves.easeOutQuart).fadeIn(duration: 250.ms);
+  }
+}
+
+// ─── Wishlist heart toggle ────────────────────────────────────────────────────
+// ♡/♥ toggle shown on product cards and the product detail sheet. Red when
+// wishlisted. Requires login — logged-out taps get the usual toast. The
+// toggle is optimistic (WishlistProvider reverts on API failure).
+class GWishHeart extends StatelessWidget {
+  final Map<String, dynamic> product;
+  final double size;
+  const GWishHeart({super.key, required this.product, this.size = 32});
+
+  @override
+  Widget build(BuildContext ctx) {
+    final id = asInt(product['id']);
+    final wished = ctx.watch<WishlistProvider>().contains(id);
+    return GestureDetector(
+      onTap: () {
+        if (!ctx.read<AuthProvider>().isAuthed) {
+          showMsg(ctx, 'Please log in to save items to your wishlist');
+          return;
+        }
+        HapticFeedback.lightImpact();
+        ctx.read<WishlistProvider>().toggle(id, product: product);
+      },
+      child: Container(
+        width: size, height: size,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 8, offset: const Offset(0, 2))],
+        ),
+        child: Icon(
+          wished ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+          size: size * 0.55,
+          color: wished ? C.red : C.t4,
+        ),
+      ),
+    );
   }
 }
 
