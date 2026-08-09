@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'data/services/auth.dart';
 import 'data/services/location_provider.dart';
 import 'data/services/cart_provider.dart';
+import 'data/services/wishlist_provider.dart';
 import 'data/services/push_service.dart';
 import 'presentation/theme/theme.dart';
 import 'presentation/widgets/widgets.dart';
@@ -14,6 +15,7 @@ import 'presentation/screens/home/home_screen.dart';
 import 'presentation/screens/bookings/bookings_screen.dart';
 import 'presentation/screens/bookings/book_screen.dart';
 import 'presentation/screens/shop/shop_screen.dart';
+import 'presentation/screens/shop/wishlist_screen.dart';
 import 'presentation/screens/plantopedia/plantopedia_screen.dart';
 import 'presentation/screens/profile/profile_screen.dart';
 import 'presentation/screens/subscriptions/subscriptions_screen.dart';
@@ -43,6 +45,7 @@ void main() {
     ChangeNotifierProvider(create: (_) => AuthProvider()),
     ChangeNotifierProvider(create: (_) => LocationProvider()),
     ChangeNotifierProvider(create: (_) => CartProvider()),
+    ChangeNotifierProvider(create: (_) => WishlistProvider()),
   ], child: const GkmApp()));
 }
 
@@ -83,6 +86,8 @@ class GkmApp extends StatelessWidget {
         break;
       case '/shop/orders':
         return _slide(const MyOrdersScreen(), s);
+      case '/wishlist':
+        return _slide(const WishlistScreen(), s);
       case '/plantopedia':
         page = const PlantopediaScreen();
         break;
@@ -190,6 +195,9 @@ class _ShellState extends State<_Shell> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       print('>>> [Shell] Initializing...');
       context.read<AuthProvider>().refreshProfile();
+
+      // Load the wishlist once per app start (no-op when logged out)
+      context.read<WishlistProvider>().load();
 
       // Always refresh GPS location on every app open (Swiggy/Zepto style)
       context.read<LocationProvider>().autoDetect();

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../data/services/api.dart';
+import '../../../data/services/invoice_service.dart';
 import '../../theme/theme.dart';
 import '../../widgets/widgets.dart';
 
@@ -489,8 +490,13 @@ class _BkDetailState extends State<BookingDetailScreen> {
 
             const SizedBox(height: 20),
             if (canRate)   GBtn(label: 'Rate Your Visit', icon: Icons.star_rounded, gold: true, onTap: _showRating).animate().fadeIn(),
-            if (canCancel) ...[
+            if (!['cancelled', 'failed'].contains(_status)) ...[
               if (canRate) const SizedBox(height: 10),
+              GBtn(label: 'Download Invoice', icon: Icons.receipt_long_rounded, outline: true,
+                onTap: () => downloadInvoice(ctx, InvoiceType.booking, widget.id)).animate().fadeIn(),
+            ],
+            if (canCancel) ...[
+              const SizedBox(height: 10),
               GBtn(label: 'Cancel Booking', danger: true, outline: true, loading: _cancelling, onTap: _cancel).animate().fadeIn(),
             ],
           ])),

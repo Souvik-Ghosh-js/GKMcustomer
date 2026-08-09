@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../../data/services/api.dart';
 import '../../../data/services/cart_provider.dart';
+import '../../../data/services/invoice_service.dart';
 import '../../../data/services/location_provider.dart';
 import '../../../data/services/razorpay_service.dart';
 import '../../theme/theme.dart';
@@ -183,15 +184,7 @@ class _ShopState extends State<ShopScreen> {
     );
   }
 
-  void _showDetail(Map<String, dynamic> pData) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      useSafeArea: true,
-      builder: (_) => _ProductDetails(pData: pData, onAdd: () => _addToCart(pData)),
-    );
-  }
+  void _showDetail(Map<String, dynamic> pData) => showProductDetailSheet(context, pData);
 
   Widget _buildHeader(BuildContext ctx) => Container(
     width: double.infinity,
@@ -202,6 +195,11 @@ class _ShopState extends State<ShopScreen> {
         Text('Plant Shop', style: GoogleFonts.poppins(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.white)),
         Text('Premium seeds, tools & care', style: p(12, color: Colors.white.withOpacity(0.7))),
       ])),
+      GestureDetector(
+        onTap: () => Navigator.pushNamed(ctx, '/wishlist'),
+        child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.12), shape: BoxShape.circle), child: const Icon(Icons.favorite_border_rounded, color: Colors.white, size: 22)),
+      ),
+      const SizedBox(width: 10),
       GestureDetector(
         onTap: () => Navigator.pushNamed(ctx, '/shop/orders'),
         child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.12), shape: BoxShape.circle), child: const Icon(Icons.history_rounded, color: Colors.white, size: 22)),
@@ -286,6 +284,20 @@ class _ShopState extends State<ShopScreen> {
   );
 }
 
+// Opens the product detail sheet from anywhere (shop grid, wishlist screen).
+void showProductDetailSheet(BuildContext context, Map<String, dynamic> pData) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    useSafeArea: true,
+    builder: (_) => _ProductDetails(pData: pData, onAdd: () {
+      HapticFeedback.lightImpact();
+      context.read<CartProvider>().add(pData);
+    }),
+  );
+}
+
 class _ProductTile extends StatefulWidget {
   final Map<String, dynamic> pData; final int qty; final VoidCallback onAdd, onRemove, onTap;
   const _ProductTile({required this.pData, required this.qty, required this.onAdd, required this.onRemove, required this.onTap});
@@ -348,6 +360,8 @@ class _ProductTileState extends State<_ProductTile> {
                   ),
                 ),
               ),
+              // Wishlist heart
+              Positioned(top: 10, left: 10, child: GWishHeart(product: pData, size: 30)),
               // Discount badge
               if (discount > 0)
                 Positioned(top: 10, right: 10,
@@ -518,6 +532,7 @@ class _ProductDetailsState extends State<_ProductDetails> {
                       ),
                     ),
                   ),
+                  Positioned(top: 8, right: 12, child: GWishHeart(product: _data, size: 38)),
                   if (images.length > 1)
                     Positioned(
                       left: 0, right: 0, bottom: 6,
@@ -706,6 +721,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
   
   // Track quantity modifications
   late Map<int, int> _qtyMap;
+  // Lines removed on this screen (kept in sync with CartProvider)
+  final Set<int> _removed = {};
 
   @override
   void initState() {
@@ -726,7 +743,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
     } catch (_) {/* non-critical */}
   }
 
-  double get _subtotal => widget.cart.fold<double>(0.0, (s, e) => s + asDouble(asMap(e['product'])['price']) * (_qtyMap[asInt(asMap(e['product'])['id'])] ?? asInt(e['qty'])));
+  List<dynamic> get _visibleCart => widget.cart.where((e) => !_removed.contains(asInt(asMap(e['product'])['id']))).toList();
+
+  double get _subtotal => _visibleCart.fold<double>(0.0, (s, e) => s + asDouble(asMap(e['product'])['price']) * (_qtyMap[asInt(asMap(e['product'])['id'])] ?? asInt(e['qty'])));
 
   Future<void> _applyCoupon([String? codeArg]) async {
     final code = (codeArg ?? _couponCtrl.text).trim().toUpperCase();
@@ -772,17 +791,30 @@ class _CheckoutPageState extends State<CheckoutPage> {
     setState(() {
       _qtyMap[productId] = current + 1;
     });
+    context.read<CartProvider>().setQty(productId, current + 1);
   }
 
   void _decrementQty(int productId) {
-    setState(() {
-      final current = _qtyMap[productId] ?? 0;
-      if (current > 1) {
-        _qtyMap[productId] = current - 1;
-      } else if (current == 1) {
-        _qtyMap.remove(productId);
-      }
-    });
+    final current = _qtyMap[productId] ?? 0;
+    if (current <= 1) return; // steppers stop at 1 — the ✕ removes the line
+    setState(() => _qtyMap[productId] = current - 1);
+    context.read<CartProvider>().setQty(productId, current - 1);
+  }
+
+  // Delete a whole line regardless of its quantity.
+  void _removeLine(int productId, String name) {
+    HapticFeedback.lightImpact();
+    setState(() { _removed.add(productId); _qtyMap.remove(productId); });
+    context.read<CartProvider>().removeLine(productId);
+    showMsg(context, '$name removed from cart');
+    if (_visibleCart.isEmpty && mounted) Navigator.pop(context);
+  }
+
+  void _clearCart() {
+    HapticFeedback.lightImpact();
+    context.read<CartProvider>().clear();
+    showMsg(context, 'Cart cleared');
+    Navigator.pop(context);
   }
 
   @override void dispose() { _gstinCtrl.dispose(); _bizCtrl.dispose(); _couponCtrl.dispose(); super.dispose(); }
@@ -802,11 +834,20 @@ class _CheckoutPageState extends State<CheckoutPage> {
   @override
   Widget build(BuildContext ctx) {
     final loc = context.watch<LocationProvider>();
-    final totalValue = widget.cart.fold<double>(0.0, (s, e) => s + asDouble(asMap(e['product'])['price']) * (_qtyMap[asInt(asMap(e['product'])['id'])] ?? asInt(e['qty'])));
+    final visibleCart = _visibleCart;
+    final totalValue = _subtotal;
 
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(backgroundColor: Colors.white, elevation: 0, leading: IconButton(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.arrow_back, color: Colors.black)), title: Text('Checkout', style: p(18, w: FontWeight.w800, color: Colors.black))),
+      appBar: AppBar(
+        backgroundColor: Colors.white, elevation: 0,
+        leading: IconButton(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.arrow_back, color: Colors.black)),
+        title: Text('Checkout', style: p(18, w: FontWeight.w800, color: Colors.black)),
+        actions: [
+          if (visibleCart.isNotEmpty)
+            TextButton(onPressed: _clearCart, child: Text('Clear cart', style: p(13, w: FontWeight.w700, color: C.red))),
+        ],
+      ),
       body: SingleChildScrollView(padding: const EdgeInsets.all(24), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
          GSec('Service Address'),
          const SizedBox(height: 12),
@@ -827,7 +868,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
          const SizedBox(height: 32),
          GSec('Order Summary'),
          const SizedBox(height: 12),
-         ...widget.cart.map((e) {
+         ...visibleCart.map((e) {
             final prod = asMap(e['product']);
             final prodId = asInt(prod['id']);
             final q = _qtyMap[prodId] ?? asInt(e['qty']);
@@ -877,6 +918,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
                ),
                const SizedBox(width: 10),
                Text('₹${(price * q).toStringAsFixed(0)}', style: p(14, w: FontWeight.w800)),
+               const SizedBox(width: 8),
+               // Remove this line entirely, regardless of quantity
+               GestureDetector(
+                 onTap: () => _removeLine(prodId, asStr(prod['name'])),
+                 child: Container(
+                   width: 28, height: 28,
+                   alignment: Alignment.center,
+                   decoration: BoxDecoration(color: C.red.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8)),
+                   child: const Icon(Icons.close_rounded, size: 16, color: C.red),
+                 ),
+               ),
             ]));
          }),
          const Divider(height: 48),
@@ -1115,7 +1167,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final loc = context.read<LocationProvider>();
     setState(() => _busy = true);
     try {
-      final items = widget.cart.map((e) {
+      final items = _visibleCart.map((e) {
         final prodId = asInt(asMap(e['product'])['id']);
         return {'product_id': prodId, 'quantity': _qtyMap[prodId] ?? asInt(e['qty'])};
       }).toList();
@@ -1230,50 +1282,6 @@ class OrderDetailScreen extends StatelessWidget {
     return s.isEmpty ? '—' : s;
   }
 
-  void _showBill(BuildContext ctx) {
-    final items = asList(order['items']);
-    final gstAmt = asDouble(order['gst_amount']);
-    final total = asDouble(order['total_amount']);
-    // Real product subtotal from line items — NOT total - gstAmt (services break that).
-    double productSubtotal = 0;
-    for (final i in items) {
-      final m = asMap(i);
-      productSubtotal += asDouble(m['price']) * asInt(m['quantity']);
-    }
-    // Anything left (total - products - GST) belongs to service bookings on the order.
-    final serviceTotal = (total - productSubtotal - gstAmt).clamp(0, double.infinity).toDouble();
-    final applyGst = order['apply_gst'] == true || order['apply_gst'] == 1;
-    final state = asStr(order['shipping_state'], '');
-    final isUP = state.toLowerCase().contains('uttar') || state.toLowerCase() == 'up';
-
-    // Effective GST rate: prefer recomputing from gstAmt/productSubtotal so mixed-rate
-    // carts still render a sensible value. Fall back to first product's gst_rate.
-    int gstRate = 0;
-    if (gstAmt > 0 && productSubtotal > 0) {
-      gstRate = ((gstAmt / productSubtotal) * 100).round();
-    } else if (items.isNotEmpty) {
-      gstRate = asInt(asMap(asMap(items.first)['product'])['gst_rate']);
-    }
-
-    showModalBottomSheet(
-      context: ctx,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _BillSheet(
-        order: order,
-        items: items,
-        subtotal: productSubtotal,
-        serviceTotal: serviceTotal,
-        gstAmt: gstAmt,
-        total: total,
-        applyGst: applyGst,
-        isUP: isUP,
-        gstRate: gstRate,
-        cleanAddr: _cleanAddr,
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext ctx) {
     final items = asList(order['items']);
@@ -1296,14 +1304,14 @@ class OrderDetailScreen extends StatelessWidget {
                 Text('My Orders', style: p(13, color: Colors.white70)),
               ])),
             GestureDetector(
-              onTap: () => _showBill(ctx),
+              onTap: () => downloadInvoice(ctx, InvoiceType.order, asInt(order['id'])),
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   const Icon(Icons.receipt_long_rounded, size: 14, color: Colors.white),
                   const SizedBox(width: 6),
-                  Text('Bill', style: p(12, w: FontWeight.w700, color: Colors.white)),
+                  Text('Download Invoice', style: p(12, w: FontWeight.w700, color: Colors.white)),
                 ]),
               ),
             ),
@@ -1365,122 +1373,6 @@ class OrderDetailScreen extends StatelessWidget {
             }),
           ])),
         ),
-      ]),
-    );
-  }
-}
-
-class _BillSheet extends StatelessWidget {
-  final Map<String, dynamic> order;
-  final List<dynamic> items;
-  final double subtotal, serviceTotal, gstAmt, total;
-  final bool applyGst, isUP;
-  final int gstRate;
-  final String Function(String) cleanAddr;
-
-  const _BillSheet({
-    required this.order, required this.items,
-    required this.subtotal, required this.serviceTotal,
-    required this.gstAmt, required this.total,
-    required this.applyGst, required this.isUP, required this.gstRate,
-    required this.cleanAddr,
-  });
-
-  Widget _row(String label, String value, {bool bold = false, Color? color}) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 5),
-    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-      Text(label, style: p(13, w: bold ? FontWeight.w800 : FontWeight.w500, color: color ?? C.t2)),
-      Text(value, style: p(13, w: bold ? FontWeight.w900 : FontWeight.w600, color: color ?? C.t1)),
-    ]),
-  );
-
-  @override
-  Widget build(BuildContext ctx) {
-    final dateStr = asStr(order['createdAt'] ?? order['created_at'], '');
-    final gstin = asStr(order['billing_gstin'], '');
-    final bizName = asStr(order['billing_business_name'], '');
-    final customerName = asStr(order['customer_name'] ?? order['customerName'] ?? (order['customer'] is Map ? order['customer']['name'] : ''), 'Customer');
-
-    return Container(
-      decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
-      padding: EdgeInsets.fromLTRB(24, 24, 24, MediaQuery.of(ctx).padding.bottom + 24),
-      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Handle
-        Center(child: Container(width: 36, height: 4, decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(99)))),
-        const SizedBox(height: 20),
-
-        // Header
-        Row(children: [
-          Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: C.forest.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(12)),
-            child: const Icon(Icons.receipt_long_rounded, color: C.forest, size: 22)),
-          const SizedBox(width: 12),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Tax Invoice', style: p(16, w: FontWeight.w900, color: C.t1)),
-            Text('Plantura Care Pvt Ltd (Gharkamali) — GSTIN: 09AAAAA0000A1Z5', style: p(10, color: C.t3)),
-          ])),
-        ]),
-        const SizedBox(height: 20),
-        const Divider(height: 1),
-        const SizedBox(height: 16),
-
-        // Customer / order meta
-        if (customerName.isNotEmpty) Text(customerName, style: p(14, w: FontWeight.w800, color: C.t1)),
-        if (bizName.isNotEmpty) Text(bizName, style: p(12, color: C.t3)),
-        if (gstin.isNotEmpty) Text('GSTIN: $gstin', style: p(12, color: C.t3)),
-        const SizedBox(height: 4),
-        Text('Order: ${asStr(order['order_number'], '#${order['id']}')}', style: p(12, color: C.t3)),
-        Text('Date: ${dateStr.length >= 10 ? dateStr.substring(0, 10) : '—'}', style: p(12, color: C.t3)),
-        Text('Supply to: ${isUP ? 'Uttar Pradesh (Intra-state)' : 'Inter-state'}', style: p(12, color: C.t3)),
-        const SizedBox(height: 16),
-        const Divider(height: 1),
-        const SizedBox(height: 12),
-
-        // Items
-        ...items.map((i) {
-          final item = asMap(i);
-          final product = asMap(item['product']);
-          final lineTotal = asDouble(item['price']) * asInt(item['quantity']);
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Row(children: [
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(asStr(product['name'] ?? item['product_name']), style: p(13, w: FontWeight.w700, color: C.t1)),
-                Text('${item['quantity']} x ₹${asDouble(item['price']).toStringAsFixed(2)}', style: p(11, color: C.t3)),
-              ])),
-              Text('₹${lineTotal.toStringAsFixed(2)}', style: p(13, w: FontWeight.w700)),
-            ]),
-          );
-        }),
-
-        const SizedBox(height: 12),
-        const Divider(height: 1),
-        const SizedBox(height: 12),
-
-        // Totals
-        _row('Products subtotal', '₹${subtotal.toStringAsFixed(2)}'),
-        if (serviceTotal > 0) _row('Services / Mali booking', '₹${serviceTotal.toStringAsFixed(2)}'),
-        if (applyGst && gstAmt > 0) ...[
-          if (isUP) ...[
-            _row('SGST${gstRate > 0 ? ' @ ${(gstRate / 2).toStringAsFixed(gstRate.isOdd ? 1 : 0)}%' : ''}', '₹${(gstAmt / 2).toStringAsFixed(2)}', color: C.forest),
-            _row('CGST${gstRate > 0 ? ' @ ${(gstRate / 2).toStringAsFixed(gstRate.isOdd ? 1 : 0)}%' : ''}', '₹${(gstAmt / 2).toStringAsFixed(2)}', color: C.forest),
-          ] else
-            _row('IGST${gstRate > 0 ? ' @ $gstRate%' : ''}', '₹${gstAmt.toStringAsFixed(2)}', color: C.forest),
-        ],
-        const Divider(height: 24),
-        _row('Total', '₹${total.toStringAsFixed(2)}', bold: true, color: C.green),
-
-        if (!applyGst || gstAmt == 0) ...[
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(10)),
-            child: Text('GST was not claimed for this order. To get a GST invoice, enable the GST option at checkout.', style: p(11, color: Colors.orange.shade800)),
-          ),
-        ],
-
-        const SizedBox(height: 20),
-        // Footer note
-        Center(child: Text('Plantura Care Pvt Ltd\nThis is a computer-generated invoice.\nCIN: U01500UP2024PTC000001', style: p(10, color: C.t4), textAlign: TextAlign.center)),
       ]),
     );
   }
