@@ -407,8 +407,14 @@ class Api {
 
   // Coupons the customer can currently apply (returns a list).
   // Optional scope filters to 'booking' | 'subscription' | 'products'.
-  Future<dynamic> getAvailableCoupons([String? scope]) =>
-      req('GET', '/coupons', query: {if (scope != null && scope.isNotEmpty) 'scope': scope});
+  // When `subtotal` (pre-GST) is passed the server evaluates each coupon
+  // against it and returns rows sorted eligible-first, each carrying
+  // { eligible: bool, reason: String?, discount_amount: num? }.
+  Future<dynamic> getAvailableCoupons([String? scope, double? subtotal]) =>
+      req('GET', '/coupons', query: {
+        if (scope != null && scope.isNotEmpty) 'scope': scope,
+        if (subtotal != null) 'subtotal': subtotal.toStringAsFixed(2),
+      });
 
   Future<dynamic> getMyShopOrders({int page = 1, int limit = 10}) =>
       req('GET', '/shop/orders/my', query: {'page': '$page', 'limit': '$limit'});

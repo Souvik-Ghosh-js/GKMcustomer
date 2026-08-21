@@ -39,7 +39,9 @@ class _BookState extends State<BookScreen> {
   String? _couponMsg;
   bool _couponBusy = false;
   List<dynamic> _availableCoupons = [];
-  String? _couponsLoadedFor; // scope the available-coupon list was fetched for
+  bool _couponsLoaded = false; // false until the first /coupons response lands
+  String? _couponsLoadedFor; // "scope|subtotal" key the available-coupon list was fetched for
+  Timer? _couponsDebounce;
 
   static const _slots = ['08:00','09:00','10:00','11:00','14:00','15:00','16:00'];
   List<String> _availableSlots = [];
@@ -134,6 +136,7 @@ class _BookState extends State<BookScreen> {
           _recheckZone(saved.lat, saved.lng);
         } else {
           _loadInstantInfo();
+          _scheduleCouponRefresh(); // zone base price feeds the coupon subtotal
         }
       }
     });
@@ -152,6 +155,7 @@ class _BookState extends State<BookScreen> {
         // Persist the resolved zone back to provider
         context.read<LocationProvider>().updateZoneForCurrent(zone);
         _loadInstantInfo();
+        _scheduleCouponRefresh(); // zone base price feeds the coupon subtotal
       } else {
         if (mounted) setState(() => _zoneChecking = false);
       }
@@ -160,7 +164,7 @@ class _BookState extends State<BookScreen> {
     }
   }
 
-  @override void dispose() { _notesCtrl.dispose(); _couponCtrl.dispose(); super.dispose(); }
+  @override void dispose() { _couponsDebounce?.cancel(); _notesCtrl.dispose(); _couponCtrl.dispose(); super.dispose(); }
 
   String _cleanAddr(String s) {
     final reg = RegExp(r'-?\d{1,3}\.\d{4,}');
@@ -191,28 +195,44 @@ class _BookState extends State<BookScreen> {
   void _selectPlan(Map<String, dynamic> pl) {
     final newId = asInt(pl['id']);
     if (newId == _planId) return;
-    setState(() { _planId = newId; _clearCoupon(); });
-    _loadCoupons(); // scope may have flipped between booking/subscription
+    setState(() { _planId = newId; _clearCoupon(); }); // also refreshes coupons (scope/subtotal may change)
   }
 
   // ── Coupons ──────────────────────────────────────────────────────────────
+  // The server evaluates every coupon against (scope, pre-GST subtotal) and
+  // returns eligible-first rows with `eligible`, `reason` and the exact
+  // `discount_amount`. Re-fetched whenever either input changes.
+  String get _couponsKey => '$_couponScope|${_baseAmount.toStringAsFixed(2)}';
+
   Future<void> _loadCoupons() async {
     final scope = _couponScope;
-    if (_couponsLoadedFor == scope) return;
+    final base = _baseAmount;
+    final key = _couponsKey;
+    if (_couponsLoadedFor == key) return;
     try {
-      final res = await _api.getAvailableCoupons(scope);
-      if (!mounted || _couponScope != scope) return;
-      setState(() { _availableCoupons = asList(res); _couponsLoadedFor = scope; });
+      final res = await _api.getAvailableCoupons(scope, base);
+      // Drop a stale response if the priced selection moved on meanwhile.
+      if (!mounted || _couponsKey != key) return;
+      setState(() { _availableCoupons = asList(res); _couponsLoaded = true; _couponsLoadedFor = key; });
     } catch (_) {/* non-critical */}
   }
 
+  // Light debounce so rapid taps on the plant counter / add-ons collapse
+  // into a single refresh.
+  void _scheduleCouponRefresh() {
+    _couponsDebounce?.cancel();
+    _couponsDebounce = Timer(const Duration(milliseconds: 350), () { if (mounted) _loadCoupons(); });
+  }
+
   // Drop an applied coupon whenever the priced selection changes so a stale
-  // discount never reaches the server.
+  // discount never reaches the server. Also queues an available-coupon
+  // refresh since eligibility/savings depend on the new subtotal.
   void _clearCoupon() {
     _appliedCouponCode = null;
     _couponDiscount = 0;
     _couponMsg = null;
     _couponCtrl.clear();
+    _scheduleCouponRefresh();
   }
 
   Future<void> _applyCoupon([String? codeArg]) async {
@@ -276,6 +296,7 @@ class _BookState extends State<BookScreen> {
       // lp.save(result); // Already handled in showSavedLocations for new ones
       setState(() => _picked = result);
       _loadInstantInfo();
+      _scheduleCouponRefresh(); // zone base price feeds the coupon subtotal
     }
   }
 
@@ -720,52 +741,74 @@ class _BookState extends State<BookScreen> {
         ]),
         if (_couponMsg != null)
           Padding(padding: const EdgeInsets.only(top: 6), child: Text(_couponMsg!, style: p(12, w: FontWeight.w600, color: Colors.red[400]))),
-        if (_availableCoupons.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          Text('AVAILABLE COUPONS', style: p(11, w: FontWeight.w800, color: Colors.black38, ls: 0.5)),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 64,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: _availableCoupons.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
-              itemBuilder: (_, i) => _couponChip(asMap(_availableCoupons[i])),
-            ),
-          ),
-        ],
+        if (_couponsLoaded) ..._couponGroups(),
       ],
     ]);
   }
 
+  // Eligible chips first (tap = apply), then "not eligible yet" chips greyed
+  // out with the server's reason. Eligibility and savings come from the
+  // server response — no client-side min-order guesswork.
+  List<Widget> _couponGroups() {
+    final rows = _availableCoupons.map((c) => asMap(c)).toList();
+    if (rows.isEmpty) return const [];
+    final eligible = rows.where((c) => c['eligible'] == true).toList();
+    final ineligible = rows.where((c) => c['eligible'] != true).toList();
+    return [
+      const SizedBox(height: 12),
+      if (eligible.isNotEmpty) ...[
+        Text('ELIGIBLE COUPONS', style: p(11, w: FontWeight.w800, color: C.green, ls: 0.5)),
+        const SizedBox(height: 8),
+        _couponRow(eligible),
+      ] else
+        Text('No coupons eligible yet', style: p(12, w: FontWeight.w600, color: Colors.black38)),
+      if (ineligible.isNotEmpty) ...[
+        const SizedBox(height: 12),
+        Text('NOT ELIGIBLE YET', style: p(11, w: FontWeight.w800, color: Colors.black38, ls: 0.5)),
+        const SizedBox(height: 8),
+        _couponRow(ineligible),
+      ],
+    ];
+  }
+
+  Widget _couponRow(List<Map<String, dynamic>> items) => SizedBox(
+        height: 64,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: items.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (_, i) => _couponChip(items[i]),
+        ),
+      );
+
   Widget _couponChip(Map<String, dynamic> c) {
     final code = asStr(c['code']);
-    final type = asStr(c['discount_type']);
-    final val = asDouble(c['discount_value']);
-    final maxDisc = c['max_discount'] == null ? 0.0 : asDouble(c['max_discount']);
-    final min = asDouble(c['min_order_amount']);
-    final eligible = _baseAmount >= min;
-    final label = type == 'percentage'
-        ? '${val.toStringAsFixed(val % 1 == 0 ? 0 : 1)}% OFF${maxDisc > 0 ? ' up to ₹${maxDisc.toStringAsFixed(0)}' : ''}'
-        : '₹${val.toStringAsFixed(0)} OFF';
-    final sub = eligible ? label : 'Min. order ₹${min.toStringAsFixed(0)}';
+    final eligible = c['eligible'] == true;
+    final saving = asDouble(c['discount_amount']);
+    final reason = asStr(c['reason']);
+    final desc = asStr(c['description']);
+    final title = eligible ? '$code · Save ₹${saving.toStringAsFixed(0)}' : code;
+    final sub = eligible
+        ? (desc.isNotEmpty ? desc : 'Tap to apply')
+        : (reason.isNotEmpty ? reason : 'Not eligible yet');
     return GestureDetector(
       onTap: (eligible && !_couponBusy) ? () => _applyCoupon(code) : null,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        constraints: const BoxConstraints(maxWidth: 220),
         decoration: BoxDecoration(
-          color: eligible ? Colors.white : const Color(0xFFF0F0F0),
+          color: eligible ? C.green.withOpacity(0.06) : const Color(0xFFF0F0F0),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: eligible ? C.forest.withOpacity(0.35) : Colors.black.withOpacity(0.06)),
+          border: Border.all(color: eligible ? C.green.withOpacity(0.45) : Colors.black.withOpacity(0.06)),
         ),
         child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.local_offer_rounded, size: 13, color: eligible ? C.forest : Colors.black26),
+            Icon(Icons.local_offer_rounded, size: 13, color: eligible ? C.green : Colors.black26),
             const SizedBox(width: 6),
-            Text(code, style: p(13, w: FontWeight.w800, color: eligible ? C.forest : Colors.black38)),
+            Flexible(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: p(13, w: FontWeight.w800, color: eligible ? C.forest : Colors.black38))),
           ]),
           const SizedBox(height: 3),
-          Text(sub, style: p(11, w: FontWeight.w700, color: eligible ? C.green : Colors.orange.shade800)),
+          Text(sub, maxLines: 1, overflow: TextOverflow.ellipsis, style: p(10, w: FontWeight.w600, color: eligible ? C.green : Colors.black38)),
         ]),
       ),
     );
