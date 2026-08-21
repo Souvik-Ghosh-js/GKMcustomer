@@ -32,6 +32,15 @@ class _BookState extends State<BookScreen> {
   final Set<int> _selectedAddons = {};
   bool _autoRenew = true;
 
+  // ── Coupon state (service bookings / monthly plans) ──────────────────────
+  final _couponCtrl = TextEditingController();
+  String? _appliedCouponCode;
+  double _couponDiscount = 0;
+  String? _couponMsg;
+  bool _couponBusy = false;
+  List<dynamic> _availableCoupons = [];
+  String? _couponsLoadedFor; // scope the available-coupon list was fetched for
+
   static const _slots = ['08:00','09:00','10:00','11:00','14:00','15:00','16:00'];
   List<String> _availableSlots = [];
   bool _loadingSlots = false, _slotsLoaded = false, _noGardenersInZone = false;
@@ -80,7 +89,9 @@ class _BookState extends State<BookScreen> {
     return asDouble(plan['price']);
   }
 
-  double get _total {
+  // Pre-GST amount: plan/zone base + extra plants + add-ons. Coupons are
+  // validated against this figure.
+  double get _baseAmount {
     // Base = zone base price for on-demand, plan price for subscriptions.
     double base = asDouble(_selectedPlan?['price']);
     if (!_isSub && _picked != null && _zone != null && asDouble(_zone!['base_price']) > 0) {
@@ -92,8 +103,19 @@ class _BookState extends State<BookScreen> {
       final a = _addons.where((x) => asInt(x['id']) == id).firstOrNull;
       t += asDouble(a?['price']);
     }
-    return t * 1.18; // + 18% GST
+    return t;
   }
+
+  double get _gstAmount => _baseAmount * 0.18; // 18% GST
+  double get _grossTotal => _baseAmount * 1.18; // GST-inclusive, before coupon
+
+  // Payable total: discount comes off the GST-inclusive amount (matches server).
+  double get _total {
+    final t = _grossTotal - _couponDiscount;
+    return t < 0 ? 0 : t;
+  }
+
+  String get _couponScope => _isSub ? 'subscription' : 'booking';
 
   bool _zoneChecking = false;
 
@@ -138,7 +160,7 @@ class _BookState extends State<BookScreen> {
     }
   }
 
-  @override void dispose() { _notesCtrl.dispose(); super.dispose(); }
+  @override void dispose() { _notesCtrl.dispose(); _couponCtrl.dispose(); super.dispose(); }
 
   String _cleanAddr(String s) {
     final reg = RegExp(r'-?\d{1,3}\.\d{4,}');
@@ -162,12 +184,63 @@ class _BookState extends State<BookScreen> {
         if (_planId == null && _plans.isNotEmpty) _planId = asInt(_plans.first['id']);
         _loading = false;
       });
+      _loadCoupons();
     } catch (_) { if (mounted) setState(() => _loading = false); }
   }
 
   void _selectPlan(Map<String, dynamic> pl) {
-    setState(() => _planId = asInt(pl['id']));
+    final newId = asInt(pl['id']);
+    if (newId == _planId) return;
+    setState(() { _planId = newId; _clearCoupon(); });
+    _loadCoupons(); // scope may have flipped between booking/subscription
   }
+
+  // ── Coupons ──────────────────────────────────────────────────────────────
+  Future<void> _loadCoupons() async {
+    final scope = _couponScope;
+    if (_couponsLoadedFor == scope) return;
+    try {
+      final res = await _api.getAvailableCoupons(scope);
+      if (!mounted || _couponScope != scope) return;
+      setState(() { _availableCoupons = asList(res); _couponsLoadedFor = scope; });
+    } catch (_) {/* non-critical */}
+  }
+
+  // Drop an applied coupon whenever the priced selection changes so a stale
+  // discount never reaches the server.
+  void _clearCoupon() {
+    _appliedCouponCode = null;
+    _couponDiscount = 0;
+    _couponMsg = null;
+    _couponCtrl.clear();
+  }
+
+  Future<void> _applyCoupon([String? codeArg]) async {
+    final code = (codeArg ?? _couponCtrl.text).trim().toUpperCase();
+    if (code.isEmpty) { setState(() => _couponMsg = 'Enter a coupon code'); return; }
+    final scope = _couponScope;
+    final base = _baseAmount;
+    setState(() { _couponBusy = true; _couponMsg = null; _couponCtrl.text = code; });
+    try {
+      final res = await _api.validateCoupon(code, base, scope);
+      if (!mounted) return;
+      // Ignore a late response if the priced selection changed meanwhile.
+      if (_couponScope != scope || _baseAmount != base) return;
+      if (res is Map && res['code'] != null && res['discount_amount'] != null) {
+        setState(() { _appliedCouponCode = asStr(res['code']); _couponDiscount = asDouble(res['discount_amount']); _couponMsg = null; });
+        showMsg(context, 'Coupon ${asStr(res['code'])} applied', ok: true);
+      } else {
+        final msg = res is Map ? asStr(res['message']) : '';
+        setState(() { _appliedCouponCode = null; _couponDiscount = 0; _couponMsg = msg.isEmpty ? 'Invalid coupon code' : msg; });
+      }
+    } on ApiError catch (e) {
+      if (mounted) setState(() { _appliedCouponCode = null; _couponDiscount = 0; _couponMsg = e.message; });
+    } catch (_) {
+      if (mounted) setState(() { _appliedCouponCode = null; _couponDiscount = 0; _couponMsg = 'Could not apply coupon. Please try again.'; });
+    } finally { if (mounted) setState(() => _couponBusy = false); }
+  }
+
+  void _removeCoupon() => setState(_clearCoupon);
 
   Future<void> _loadAvailability(String date) async {
     final zoneId = _zone != null ? asInt(_zone!['id']) : 0;
@@ -239,7 +312,8 @@ class _BookState extends State<BookScreen> {
       if (zoneId == 0) throw ApiError('Please select a serviceable location first.', 404);
 
       final addonsPayload = _selectedAddons.map((id) => {'addon_id': id, 'quantity': 1}).toList();
-      final totalAmount = _total;
+      final totalAmount = _total; // client estimate; server recomputes and is authoritative
+      final couponCode = _appliedCouponCode;
 
       if (_isSub) {
         final sub = await _api.createSubscription(
@@ -256,6 +330,7 @@ class _BookState extends State<BookScreen> {
           addons: addonsPayload,
           totalAmount: totalAmount,
           paymentMethod: 'razorpay',
+          couponCode: couponCode,
         );
         final subId = asInt(asMap(sub)['id']);
         final pay = await RazorpayService().pay(type: 'subscription', subscriptionId: subId);
@@ -282,6 +357,7 @@ class _BookState extends State<BookScreen> {
           customerNotes: _notesCtrl.text.trim().isNotEmpty ? _notesCtrl.text.trim() : null,
           addons: addonsPayload,
           totalAmount: totalAmount,
+          couponCode: couponCode,
         );
         final bookingId = asInt(asMap(booking)['id']);
         final pay = await RazorpayService().pay(type: 'booking', bookingId: bookingId);
@@ -453,9 +529,9 @@ class _BookState extends State<BookScreen> {
         ),
         const SizedBox(height: 32),
         Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          _CounterBtn(icon: Icons.remove, enabled: _plantCount > 0, onTap: () => setState(() => _plantCount--)),
+          _CounterBtn(icon: Icons.remove, enabled: _plantCount > 0, onTap: () => setState(() { _plantCount--; _clearCoupon(); })),
           SizedBox(width: 140, child: Center(child: Text('$_plantCount', style: GoogleFonts.poppins(fontSize: 80, fontWeight: FontWeight.w900, color: C.forest)))),
-          _CounterBtn(icon: Icons.add, enabled: _plantCount < 200, onTap: () => setState(() => _plantCount++)),
+          _CounterBtn(icon: Icons.add, enabled: _plantCount < 200, onTap: () => setState(() { _plantCount++; _clearCoupon(); })),
         ]),
         const SizedBox(height: 16),
         Text(
@@ -473,7 +549,7 @@ class _BookState extends State<BookScreen> {
     else ..._addons.map((a) {
       final id = asInt(a['id']); final sel = _selectedAddons.contains(id);
       return GestureDetector(
-        onTap: () => setState(() => sel ? _selectedAddons.remove(id) : _selectedAddons.add(id)),
+        onTap: () => setState(() { if (sel) { _selectedAddons.remove(id); } else { _selectedAddons.add(id); } _clearCoupon(); }),
         child: Container(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: sel ? C.forest : Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: sel ? C.forest : Colors.black.withOpacity(0.08))), child: Row(children: [
           Icon(Icons.add_circle_outline_rounded, color: sel ? Colors.white : C.forest),
           const SizedBox(width: 14),
@@ -550,15 +626,24 @@ class _BookState extends State<BookScreen> {
         ],
         if (!_isSub && _selectedAddons.isNotEmpty) _RowInfo(label: 'Add-ons', value: _selectedAddons.length.toString()),
         const Divider(height: 48),
+        _couponSection(),
+        const SizedBox(height: 20),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Text('Subtotal (excl. GST)', style: p(13, color: Colors.black54, w: FontWeight.w600)),
-          Text('₹${(_total / 1.18).toStringAsFixed(0)}', style: p(13, color: Colors.black54, w: FontWeight.w700)),
+          Text('₹${_baseAmount.toStringAsFixed(0)}', style: p(13, color: Colors.black54, w: FontWeight.w700)),
         ]),
         const SizedBox(height: 8),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Text('GST (18%)', style: p(13, color: Colors.black54, w: FontWeight.w600)),
-          Text('₹${(_total - _total / 1.18).toStringAsFixed(0)}', style: p(13, color: Colors.black54, w: FontWeight.w700)),
+          Text('₹${_gstAmount.toStringAsFixed(0)}', style: p(13, color: Colors.black54, w: FontWeight.w700)),
         ]),
+        if (_appliedCouponCode != null && _couponDiscount > 0) ...[
+          const SizedBox(height: 8),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Text('Discount ($_appliedCouponCode)', style: p(13, color: C.green, w: FontWeight.w700)),
+            Text('− ₹${_couponDiscount.toStringAsFixed(0)}', style: p(13, color: C.green, w: FontWeight.w800)),
+          ]),
+        ],
         const SizedBox(height: 16),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Text('Total Amount', style: p(16, w: FontWeight.w700)),
@@ -567,6 +652,123 @@ class _BookState extends State<BookScreen> {
       ])),
       const SizedBox(height: 40),
     ]));
+  }
+
+  // ── Coupon card (checkout) ───────────────────────────────────────────────
+  Widget _couponSection() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Icon(Icons.local_offer_outlined, size: 16, color: C.forest),
+        const SizedBox(width: 8),
+        Text('Have a coupon?', style: p(13, w: FontWeight.w800, color: C.forest)),
+      ]),
+      const SizedBox(height: 10),
+      if (_appliedCouponCode != null)
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: C.green.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: C.green.withOpacity(0.5), width: 1.2),
+          ),
+          child: Row(children: [
+            const Icon(Icons.check_circle_rounded, color: C.green, size: 18),
+            const SizedBox(width: 10),
+            Expanded(child: Text('$_appliedCouponCode applied · −₹${_couponDiscount.toStringAsFixed(0)}', style: p(14, w: FontWeight.w800, color: C.green), maxLines: 1, overflow: TextOverflow.ellipsis)),
+            GestureDetector(
+              onTap: _removeCoupon,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(color: C.green.withOpacity(0.12), shape: BoxShape.circle),
+                child: const Icon(Icons.close_rounded, size: 16, color: C.green),
+              ),
+            ),
+          ]),
+        )
+      else ...[
+        Row(children: [
+          Expanded(child: TextField(
+            controller: _couponCtrl,
+            textCapitalization: TextCapitalization.characters,
+            enabled: !_couponBusy,
+            style: p(14, w: FontWeight.w700, color: Colors.black),
+            decoration: InputDecoration(
+              hintText: 'COUPON CODE',
+              hintStyle: const TextStyle(color: Colors.black26, fontSize: 13, letterSpacing: 1),
+              filled: true, fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.black.withOpacity(0.08))),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.black.withOpacity(0.08))),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: C.forest)),
+            ),
+            onChanged: (_) { if (_couponMsg != null) setState(() => _couponMsg = null); },
+            onSubmitted: (_) { if (!_couponBusy) _applyCoupon(); },
+          )),
+          const SizedBox(width: 10),
+          GestureDetector(
+            onTap: _couponBusy ? null : () => _applyCoupon(),
+            child: Container(
+              height: 50,
+              padding: const EdgeInsets.symmetric(horizontal: 22),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: C.forest, borderRadius: BorderRadius.circular(12)),
+              child: _couponBusy
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : Text('Apply', style: p(14, w: FontWeight.w800, color: Colors.white)),
+            ),
+          ),
+        ]),
+        if (_couponMsg != null)
+          Padding(padding: const EdgeInsets.only(top: 6), child: Text(_couponMsg!, style: p(12, w: FontWeight.w600, color: Colors.red[400]))),
+        if (_availableCoupons.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text('AVAILABLE COUPONS', style: p(11, w: FontWeight.w800, color: Colors.black38, ls: 0.5)),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 64,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _availableCoupons.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (_, i) => _couponChip(asMap(_availableCoupons[i])),
+            ),
+          ),
+        ],
+      ],
+    ]);
+  }
+
+  Widget _couponChip(Map<String, dynamic> c) {
+    final code = asStr(c['code']);
+    final type = asStr(c['discount_type']);
+    final val = asDouble(c['discount_value']);
+    final maxDisc = c['max_discount'] == null ? 0.0 : asDouble(c['max_discount']);
+    final min = asDouble(c['min_order_amount']);
+    final eligible = _baseAmount >= min;
+    final label = type == 'percentage'
+        ? '${val.toStringAsFixed(val % 1 == 0 ? 0 : 1)}% OFF${maxDisc > 0 ? ' up to ₹${maxDisc.toStringAsFixed(0)}' : ''}'
+        : '₹${val.toStringAsFixed(0)} OFF';
+    final sub = eligible ? label : 'Min. order ₹${min.toStringAsFixed(0)}';
+    return GestureDetector(
+      onTap: (eligible && !_couponBusy) ? () => _applyCoupon(code) : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: eligible ? Colors.white : const Color(0xFFF0F0F0),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: eligible ? C.forest.withOpacity(0.35) : Colors.black.withOpacity(0.06)),
+        ),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.local_offer_rounded, size: 13, color: eligible ? C.forest : Colors.black26),
+            const SizedBox(width: 6),
+            Text(code, style: p(13, w: FontWeight.w800, color: eligible ? C.forest : Colors.black38)),
+          ]),
+          const SizedBox(height: 3),
+          Text(sub, style: p(11, w: FontWeight.w700, color: eligible ? C.green : Colors.orange.shade800)),
+        ]),
+      ),
+    );
   }
 }
 
