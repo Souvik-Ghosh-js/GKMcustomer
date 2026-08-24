@@ -319,6 +319,10 @@ class Api {
   // ─── CONTENT & SETTINGS ──────────────────────────────────────────────────
   Future<dynamic> getActiveTaglines() => req('GET', '/taglines', auth: false);
 
+  // Operations kill-switch → { paused: bool, message: String }. While paused
+  // the server 503s all create endpoints (bookings/subscriptions/shop orders).
+  Future<dynamic> getOperationsStatus() => req('GET', '/operations-status', auth: false);
+
   // ─── SHOP ─────────────────────────────────────────────────────────────────
   Future<dynamic> getShopCategories() => req('GET', '/shop/categories', auth: false);
 

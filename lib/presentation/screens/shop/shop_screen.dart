@@ -9,6 +9,7 @@ import '../../../data/services/api.dart';
 import '../../../data/services/cart_provider.dart';
 import '../../../data/services/invoice_service.dart';
 import '../../../data/services/location_provider.dart';
+import '../../../data/services/ops_status_provider.dart';
 import '../../../data/services/razorpay_service.dart';
 import '../../theme/theme.dart';
 import '../../widgets/widgets.dart';
@@ -1199,6 +1200,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   Future<void> _place() async {
+    // Operations kill-switch — short-circuit before hitting the API. The
+    // server enforces this regardless (503 on create endpoints).
+    final ops = context.read<OpsStatusProvider>();
+    if (ops.paused) { showMsg(context, ops.displayMessage, err: true); return; }
     final loc = context.read<LocationProvider>();
     setState(() => _busy = true);
     try {

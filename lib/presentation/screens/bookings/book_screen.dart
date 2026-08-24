@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../../data/services/api.dart';
 import '../../../data/services/location_provider.dart';
+import '../../../data/services/ops_status_provider.dart';
 import '../../../data/services/razorpay_service.dart';
 import '../../theme/theme.dart';
 import '../../widgets/widgets.dart';
@@ -326,6 +327,10 @@ class _BookState extends State<BookScreen> {
 
   Future<void> _submit() async {
     if (_picked == null || _selectedPlan == null) return;
+    // Operations kill-switch — short-circuit before hitting the API. The
+    // server enforces this regardless (503 on create endpoints).
+    final ops = context.read<OpsStatusProvider>();
+    if (ops.paused) { showMsg(context, ops.displayMessage, err: true); return; }
     setState(() => _submitting = true);
     final zoneId = _zone != null && asInt(_zone!['id']) > 0 ? asInt(_zone!['id']) : 0;
 
@@ -419,6 +424,7 @@ class _BookState extends State<BookScreen> {
       backgroundColor: Colors.white,
       body: Column(children: [
         _buildHeader(ctx, labels),
+        const GOpsBanner(margin: EdgeInsets.fromLTRB(16, 16, 16, 0)),
         Expanded(child: _buildBody()),
         _buildBottomNav(ctx),
       ]),
