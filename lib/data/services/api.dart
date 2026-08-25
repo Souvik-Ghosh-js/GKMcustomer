@@ -319,6 +319,12 @@ class Api {
   // ─── CONTENT & SETTINGS ──────────────────────────────────────────────────
   Future<dynamic> getActiveTaglines() => req('GET', '/taglines', auth: false);
 
+  // Service catalogue content — includes/excludes/steps/FAQs per service.
+  // No slug → list of all services; with slug → single service object.
+  Future<dynamic> getServiceDetails([String? slug]) =>
+      req('GET', '/service-details', auth: false,
+          query: {if (slug != null && slug.isNotEmpty) 'slug': slug});
+
   // Operations kill-switch → { paused: bool, message: String }. While paused
   // the server 503s all create endpoints (bookings/subscriptions/shop orders).
   Future<dynamic> getOperationsStatus() => req('GET', '/operations-status', auth: false);

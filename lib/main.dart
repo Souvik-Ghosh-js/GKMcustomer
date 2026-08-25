@@ -26,7 +26,7 @@ import 'presentation/screens/complaints/complaints_screen.dart';
 import 'presentation/screens/profile/saved_addresses_screen.dart';
 import 'presentation/screens/profile/edit_profile_screen.dart';
 import 'presentation/screens/green_makeover/green_makeover_screen.dart';
-import 'presentation/screens/services/service_detail_screen.dart';
+import 'presentation/screens/services/services_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -81,8 +81,7 @@ class GkmApp extends StatelessWidget {
       case '/green-makeover':
         return _slide(const GreenMakeoverScreen(), s);
       case '/services':
-        final sid = s.arguments is String ? s.arguments as String : null;
-        return _slide(ServiceDetailScreen(initialServiceId: sid), s);
+        return _slide(const ServicesScreen(), s);
       case '/shop':
         page = const ShopScreen();
         break;

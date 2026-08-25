@@ -11,6 +11,7 @@ import '../../data/services/wishlist_provider.dart';
 import '../../data/services/ops_status_provider.dart';
 import '../theme/theme.dart';
 export 'location_picker_sheet.dart';
+export 'service_details_sheet.dart';
 
 // ─── Operations paused banner ────────────────────────────────────────────────
 // Prominent, non-dismissible notice shown while the admin operations

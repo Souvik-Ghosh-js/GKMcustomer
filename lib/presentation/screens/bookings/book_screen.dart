@@ -526,6 +526,48 @@ class _BookState extends State<BookScreen> {
     ]),
   ]));
 
+  // ── Service details ("What's included & FAQs") ────────────────────────────
+  bool _svcInfoLoading = false;
+
+  Future<void> _showServiceInfo() async {
+    if (_svcInfoLoading) return;
+    final slug = _isSub ? 'monthly-plant-care' : 'one-time-plant-care';
+    setState(() => _svcInfoLoading = true);
+    try {
+      final svc = await ServiceDetailsCache.bySlug(slug); // in-memory, cached per slug
+      if (!mounted) return;
+      if (svc.isEmpty) { showMsg(context, 'Service details are unavailable right now.', err: true); return; }
+      showServiceDetailsSheet(context, svc);
+    } on ApiError catch (e) {
+      if (mounted) showMsg(context, e.message, err: true);
+    } catch (_) {
+      if (mounted) showMsg(context, 'Could not load service details. Please try again.', err: true);
+    } finally {
+      if (mounted) setState(() => _svcInfoLoading = false);
+    }
+  }
+
+  Widget _serviceInfoRow() => GestureDetector(
+    onTap: _showServiceInfo,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      decoration: BoxDecoration(
+        color: C.forest.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: C.border)),
+      child: Row(children: [
+        const Icon(Icons.info_outline_rounded, size: 18, color: C.forest),
+        const SizedBox(width: 10),
+        Expanded(child: Text("What's included & FAQs",
+          style: p(13, w: FontWeight.w700, color: C.forest))),
+        _svcInfoLoading
+          ? const SizedBox(width: 15, height: 15,
+              child: CircularProgressIndicator(strokeWidth: 2, color: C.forest))
+          : const Icon(Icons.chevron_right_rounded, size: 18, color: C.forest),
+      ]),
+    ),
+  );
+
   Widget _stepPlan() => SingleChildScrollView(padding: const EdgeInsets.all(24), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     if (_odPlans.isNotEmpty) ...[
       GSec('One-Time Visit'),
@@ -538,6 +580,8 @@ class _BookState extends State<BookScreen> {
       const SizedBox(height: 12),
       ..._subPlans.map((pl) => _PlanItem(plan: pl, sel: _planId == asInt(pl['id']), onTap: () => _selectPlan(Map<String, dynamic>.from(pl)), displayPrice: _odPrice(Map<String, dynamic>.from(pl as Map)))),
     ],
+    const SizedBox(height: 20),
+    _serviceInfoRow(),
   ]));
 
   Widget _stepPlants() {
@@ -677,6 +721,9 @@ class _BookState extends State<BookScreen> {
           Text('₹${_total.toStringAsFixed(0)}', style: p(24, w: FontWeight.w900, color: C.green)),
         ]),
       ])),
+      const SizedBox(height: 16),
+      // Also reachable here for flows that skip the Plan step (pre-selected plan).
+      _serviceInfoRow(),
       const SizedBox(height: 40),
     ]));
   }
