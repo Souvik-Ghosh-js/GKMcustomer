@@ -66,7 +66,7 @@ class _BookState extends State<BookScreen> {
   String? _couponsLoadedFor; // "scope|subtotal" key the available-coupon list was fetched for
   Timer? _couponsDebounce;
 
-  static const _slots = ['08:00','09:00','10:00','11:00','14:00','15:00','16:00'];
+  static const _slots = ['09:00','10:00','11:00','14:00','15:00','16:00','17:00'];
   List<String> _availableSlots = [];
   bool _loadingSlots = false, _slotsLoaded = false, _noGardenersInZone = false, _slotsError = false;
   // Availability per date, so switching back to a date shows its real slots
