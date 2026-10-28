@@ -25,6 +25,26 @@ class _BookState extends State<BookScreen> {
   bool _loading = true, _submitting = false;
 
   List<dynamic> _plans = [], _addons = [];
+  // Plant-count pricing slabs — defaults mirror the server's table and are
+  // replaced by the live (admin-configurable) table once fetched.
+  List<dynamic> _plantSlabs = const [
+    {'min': 11, 'max': 15, 'extra': 100}, {'min': 16, 'max': 20, 'extra': 200},
+    {'min': 21, 'max': 30, 'extra': 350}, {'min': 31, 'max': 40, 'extra': 400},
+    {'min': 41, 'max': 50, 'extra': 600}, {'min': 51, 'max': 60, 'extra': 800},
+    {'min': 61, 'max': 70, 'extra': 1000}, {'min': 71, 'max': 80, 'extra': 1200},
+    {'min': 81, 'max': 100, 'extra': 1300}, {'min': 101, 'max': 150, 'extra': 1800},
+    {'min': 151, 'max': 200, 'extra': 2000},
+  ];
+
+  int get _maxAutoPlants => _plantSlabs.isEmpty ? 10 : asInt(_plantSlabs.last['max']);
+  // Slab surcharge for a plant count; up to 10 plants are covered by the base.
+  double _plantSurcharge(int n) {
+    if (n <= 10) return 0;
+    for (final s in _plantSlabs) {
+      if (n >= asInt(s['min']) && n <= asInt(s['max'])) return asDouble(s['extra']);
+    }
+    return _plantSlabs.isEmpty ? 0 : asDouble(_plantSlabs.last['extra']);
+  }
   PickedLocation? _picked;
   Map<String, dynamic>? get _zone => _picked?.zone;
 
@@ -105,8 +125,9 @@ class _BookState extends State<BookScreen> {
     if (!_isSub && _picked != null && _zone != null && asDouble(_zone!['base_price']) > 0) {
       base = asDouble(_zone!['base_price']);
     }
-    // Additional plants are optional, ₹25 each, on top of the plan's free coverage.
-    double t = base + (_plantCount * 25);
+    // Plant-count SLAB surcharge (base covers up to 10 plants) — exact slab
+    // price from the admin-configurable table, never per-plant math.
+    double t = base + _plantSurcharge(_plantCount);
     for (final id in _selectedAddons) {
       final a = _addons.where((x) => asInt(x['id']) == id).firstOrNull;
       t += asDouble(a?['price']);
@@ -186,11 +207,14 @@ class _BookState extends State<BookScreen> {
   Future<void> _loadData() async {
     setState(() => _loading = true);
     try {
-      final r = await Future.wait([ _api.getPlans().catchError((_) => null), _api.getAddons().catchError((_) => null) ]);
+      final r = await Future.wait([ _api.getPlans().catchError((_) => null), _api.getAddons().catchError((_) => null), _api.getPlantSlabs().catchError((_) => null) ]);
       if (!mounted) return;
       setState(() {
         _plans  = asList(r[0]);
         _addons = asList(r[1]);
+        final slabPayload = r[2];
+        final fetchedSlabs = slabPayload is Map ? asList(slabPayload['slabs'] ?? (slabPayload['data'] is Map ? slabPayload['data']['slabs'] : null)) : <dynamic>[];
+        if (fetchedSlabs.isNotEmpty) _plantSlabs = fetchedSlabs;
         if (_planId == null && _plans.isNotEmpty) _planId = asInt(_plans.first['id']);
         _loading = false;
       });
@@ -704,8 +728,8 @@ class _BookState extends State<BookScreen> {
     return SingleChildScrollView(padding: _stepPad, child: Column(children: [
       Text(
         freePlants > 0
-            ? 'Your plan covers up to $freePlants plants. Add more only if you need them — ₹25 each.'
-            : 'Add plants beyond your plan — ₹25 each. This is optional.',
+            ? 'Your plan covers up to $freePlants plants. More plants are priced by range — the shown amount is added to the price.'
+            : 'The price covers up to 10 plants. More plants are priced by range — the shown amount is added to the price. For over $_maxAutoPlants plants, contact us for a custom quote.',
         textAlign: TextAlign.center,
         style: p(13.5, color: V.fog, h: 1.5),
       ),
@@ -713,7 +737,7 @@ class _BookState extends State<BookScreen> {
       // Rotary knob — turn to change the count; one haptic tick per step.
       _PlantKnob(
         value: _plantCount,
-        max: 200,
+        max: _maxAutoPlants,
         onChanged: (v) => setState(() { _plantCount = v; _clearCoupon(); }),
       ),
       const SizedBox(height: 18),
@@ -722,10 +746,13 @@ class _BookState extends State<BookScreen> {
         const SizedBox(width: 18),
         Text('Turn the dial or tap', style: p(12, color: V.fog)),
         const SizedBox(width: 18),
-        _CounterBtn(icon: Icons.add_rounded, enabled: _plantCount < 200, onTap: () => setState(() { _plantCount++; _clearCoupon(); })),
+        _CounterBtn(icon: Icons.add_rounded, enabled: _plantCount < _maxAutoPlants, onTap: () => setState(() { _plantCount++; _clearCoupon(); })),
       ]),
       const SizedBox(height: 20),
-      Text(_plantCount == 0 ? 'No extra plants' : '$_plantCount extra plant${_plantCount == 1 ? '' : 's'}  ·  +₹${_plantCount * 25}',
+      Text(
+        _plantCount <= 10
+            ? (_plantCount == 0 ? 'Up to 10 plants · included' : '$_plantCount plant${_plantCount == 1 ? '' : 's'} · included in the base price')
+            : '$_plantCount plants  ·  +₹${_plantSurcharge(_plantCount).toStringAsFixed(0)}',
         style: p(14, color: V.deep, w: FontWeight.w600)),
     ]));
   }
@@ -905,7 +932,7 @@ class _BookState extends State<BookScreen> {
         padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
         radius: BorderRadius.circular(24),
         child: Column(children: [
-          line('Extra plants', _plantCount == 0 ? 'None' : '$_plantCount × ₹25'),
+          line('Plants', _plantCount <= 10 ? 'Up to 10 (included)' : '$_plantCount · +₹${_plantSurcharge(_plantCount).toStringAsFixed(0)}'),
           if (!_isSub && _selectedAddons.isNotEmpty)
             line('Add-ons', _addons.where((a) => _selectedAddons.contains(asInt(a['id']))).map((a) => asStr(a['name'])).join(', ')),
           line('Subtotal', '₹${_baseAmount.toStringAsFixed(0)}'),
