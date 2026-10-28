@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../../../data/services/api.dart';
@@ -43,16 +42,7 @@ class _ProfileState extends State<ProfileScreen> {
   }
 
   Future<void> _logout() async {
-    final ok = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: Text('Sign Out?', style: p(17, w: FontWeight.w700, color: C.t1)),
-      content: Text('You\'ll need to log in again.', style: p(14, color: C.t3)),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context, false),
-          child: Text('Cancel', style: p(14, color: C.t3))),
-        TextButton(onPressed: () => Navigator.pop(context, true),
-          child: Text('Sign Out', style: p(14, w: FontWeight.w700, color: C.red))),
-      ]));
+    final ok = await showGlassConfirm(context, title: 'Sign out?', message: "You'll need to sign in again with your mobile number.", confirmLabel: 'Sign out', cancelLabel: 'Cancel', destructive: true);
     if (ok == true) { await context.read<AuthProvider>().logout(); widget.onLogout(); }
   }
 
@@ -65,14 +55,23 @@ class _ProfileState extends State<ProfileScreen> {
 
     return Scaffold(
       primary: false,
-      backgroundColor: C.bg,
+      backgroundColor: Colors.transparent,
       body: CustomScrollView(slivers: [
-        // ── Dark green header ─────────────────────────────────────────────
+        // ── Verdant pod header ────────────────────────────────────────────
         SliverToBoxAdapter(child: Container(
-          decoration: const BoxDecoration(color: Color(0xFF052B11)),
-          child: SafeArea(bottom: false, child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+          margin: EdgeInsets.fromLTRB(12, MediaQuery.of(ctx).padding.top + 8, 12, 0),
+          decoration: vPodDecoration(radius: 32),
+          child: SafeArea(top: false, bottom: false, child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
             child: Column(children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: GestureDetector(onTap: () => Navigator.maybePop(ctx),
+                  child: Container(width: 36, height: 36,
+                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
+                    child: const Icon(Icons.arrow_back_ios_rounded, size: 15, color: Colors.white))),
+              ),
+              const SizedBox(height: 14),
               Row(children: [
                 // Avatar
                 GestureDetector(
@@ -87,7 +86,7 @@ class _ProfileState extends State<ProfileScreen> {
                         ? Center(child: SizedBox(width: 24, height: 24,
                             child: CircularProgressIndicator(strokeWidth: 2.5, color: C.gold)))
                         : _newImg != null ? Image.file(_newImg!, fit: BoxFit.cover)
-                        : imgUrl != null ? Image.network(imgUrl, fit: BoxFit.cover,
+                        : imgUrl != null ? Image.network(imgUrl, cacheWidth: 300, fit: BoxFit.cover,
                               errorBuilder: (_, __, ___) => _initials(name))
                         : _initials(name))),
                     Positioned(right: 0, bottom: 0,
@@ -99,9 +98,9 @@ class _ProfileState extends State<ProfileScreen> {
                 const SizedBox(width: 16),
                 // Name + phone
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(name, style: p(18, w: FontWeight.w800, color: Colors.white)).animate().fadeIn(),
+                  Text(name, style: p(18, w: FontWeight.w800, color: Colors.white)),
                   const SizedBox(height: 3),
-                  Text('+91 $phone', style: p(13, color: Colors.white54)),
+                  Text('+91 $phone', style: p(13, color: Colors.white.withValues(alpha: 0.85))),
                   const SizedBox(height: 8),
                   GestureDetector(
                     onTap: () => Navigator.pushNamed(ctx, '/edit-profile'),
@@ -133,7 +132,7 @@ class _ProfileState extends State<ProfileScreen> {
                 label: 'Help &\nSupport',
                 onTap: () => Navigator.pushNamed(ctx, '/complaints'),
               )),
-            ]).animate().fadeIn(delay: 60.ms),
+            ]),
             const SizedBox(height: 16),
 
             // ── Menu list ────────────────────────────────────────────────
@@ -141,16 +140,15 @@ class _ProfileState extends State<ProfileScreen> {
               _MenuItem(Icons.repeat_rounded,                  'Subscriptions',        () => Navigator.pushNamed(ctx, '/subscriptions')),
               _MenuItem(Icons.storefront_rounded,              'Shop',                 () => Navigator.pushNamed(ctx, '/shop')),
               _MenuItem(Icons.shopping_bag_outlined,           'My Orders',            () => Navigator.pushNamed(ctx, '/shop/orders')),
-              _MenuItem(Icons.favorite_border_rounded,         'My Wishlist',          () => Navigator.pushNamed(ctx, '/wishlist')),
               _MenuItem(Icons.spa_outlined,                    'Services & FAQs',      () => Navigator.pushNamed(ctx, '/services')),
               _MenuItem(Icons.psychology_rounded,              'Plantopedia',          () => Navigator.pushNamed(ctx, '/plantopedia')),
               _MenuItem(Icons.notifications_rounded,           'Notifications',        () => Navigator.pushNamed(ctx, '/notifications')),
               _MenuItem(Icons.map_outlined,                    'Saved addresses',      () => Navigator.pushNamed(ctx, '/saved-addresses')),
-              _MenuItem(Icons.info_outline_rounded,            'About us',             () {}),
-              _MenuItem(Icons.description_outlined,            'Terms of services',    () {}),
-              _MenuItem(Icons.shield_outlined,                 'Privacy policy',       () {}),
-              _MenuItem(Icons.delete_outline_rounded,          'Request account deletion', () {}, danger: true, last: true),
-            ])).animate().fadeIn(delay: 140.ms),
+              _MenuItem(Icons.info_outline_rounded,            'About us',             () => _openUrl(ctx, _kAboutUrl)),
+              _MenuItem(Icons.description_outlined,            'Terms of service',     () => _openUrl(ctx, _kLegalUrl)),
+              _MenuItem(Icons.shield_outlined,                 'Privacy policy',       () => _openUrl(ctx, _kLegalUrl)),
+              _MenuItem(Icons.delete_outline_rounded,          'Request account deletion', () => _openUrl(ctx, _kLegalUrl), danger: true, last: true),
+            ])),
             const SizedBox(height: 16),
 
             // ── Logout ───────────────────────────────────────────────────
@@ -166,13 +164,13 @@ class _ProfileState extends State<ProfileScreen> {
                 const Spacer(),
                 const Icon(Icons.chevron_right_rounded, size: 18, color: C.t4),
               ]),
-            ).animate().fadeIn(delay: 180.ms),
+            ),
             const SizedBox(height: 10),
             Center(child: Column(children: [
               Image.asset('assets/images/logo-colored.png', height: 42, fit: BoxFit.contain),
               const SizedBox(height: 4),
               Text('© Plantura Care Pvt Ltd', style: p(10, color: C.t4)),
-            ])).animate().fadeIn(delay: 200.ms),
+            ])),
           ])),
         ),
       ]),
@@ -182,6 +180,15 @@ class _ProfileState extends State<ProfileScreen> {
   Widget _initials(String name) => Center(
     child: Text(name.isNotEmpty ? name[0].toUpperCase() : 'U',
       style: p(26, w: FontWeight.w800, color: Colors.white)));
+}
+
+const _kAboutUrl = 'https://gharkamali.com/about';
+// Terms, privacy policy and the account-deletion request all live here.
+const _kLegalUrl = 'https://gharkamali.com/legal';
+
+Future<void> _openUrl(BuildContext ctx, String url) async {
+  final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication).catchError((_) => false);
+  if (!ok && ctx.mounted) showMsg(ctx, "Couldn't open the page. Please try again.", err: true);
 }
 
 class _QuickTile extends StatelessWidget {
@@ -195,9 +202,9 @@ class _QuickTile extends StatelessWidget {
     onTap: onTap,
     padding: const EdgeInsets.all(18),
     child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-      Icon(icon, size: 28, color: C.forest),
+      VOrb(icon: icon, size: 48, shine: true, shineDelay: const Duration(milliseconds: 200)),
       const SizedBox(height: 10),
-      Text(label, style: p(13, w: FontWeight.w700, color: C.t1, h: 1.3),
+      Text(label, style: vx(14, w: FontWeight.w700, color: V.ink, h: 1.15),
         textAlign: TextAlign.center),
     ]),
   );
@@ -219,19 +226,20 @@ class _MenuItem extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border(bottom: last ? BorderSide.none : BorderSide(color: C.divider))),
       child: Row(children: [
-        Container(width: 36, height: 36,
-          decoration: BoxDecoration(
-            color: (danger ? C.red : C.forest).withOpacity(0.07),
-            borderRadius: BorderRadius.circular(10)),
-          child: Icon(icon, size: 18, color: danger ? C.red : C.forest)),
+        danger
+          ? Container(width: 38, height: 38,
+              decoration: BoxDecoration(color: C.red.withValues(alpha: 0.08), shape: BoxShape.circle,
+                border: Border.all(color: C.red.withValues(alpha: 0.3))),
+              child: Icon(icon, size: 18, color: C.red))
+          : VOrb(icon: icon, size: 38, dark: false, accent: V.leaf),
         const SizedBox(width: 14),
         Expanded(child: Text(label,
-          style: p(14, w: FontWeight.w600, color: danger ? C.red : C.t1))),
+          style: vx(15, w: FontWeight.w600, color: danger ? C.red : V.ink))),
         if (badge != null) ...[
           Text(badge!, style: p(13, w: FontWeight.w700, color: C.forest)),
           const SizedBox(width: 4),
         ],
-        Icon(Icons.chevron_right_rounded, size: 18, color: danger ? C.red.withOpacity(0.5) : C.t4),
+        Icon(Icons.north_east_rounded, size: 15, color: danger ? C.red.withValues(alpha: 0.5) : V.fog),
       ]),
     ),
   );

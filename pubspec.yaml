@@ -1,7 +1,7 @@
 name: gharkamali
 description: GharKaMali 
 publish_to: 'none'
-version: 1.0.7+8
+version: 1.1.0+12
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -32,22 +32,23 @@ dependencies:
   cupertino_icons: ^1.0.8
   video_player: ^2.9.1
   font_awesome_flutter: ^10.7.0
-  camera: ^0.10.5+9
+  camera: ^0.12.0+2
   path_provider: ^2.1.5
   path: ^1.9.1
   open_filex: ^4.5.0
+  liquid_glass_renderer: 0.2.0-dev.4
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
-  flutter_launcher_icons: ^0.13.1
+  flutter_launcher_icons: ^0.14.4
 
 flutter_launcher_icons:
-  android: "ic_launcher"
+  android: true
   ios: true
-  image_path: "assets/images/logo-icon.png"
-  min_sdk_android: 21
+  image_path: "assets/app_icon_final.png"
+  remove_alpha_ios: true
 
 flutter:
   uses-material-design: true

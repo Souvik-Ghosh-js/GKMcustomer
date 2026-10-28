@@ -14,9 +14,14 @@ import '../../../data/services/razorpay_service.dart';
 import '../../theme/theme.dart';
 import '../../widgets/widgets.dart';
 import '../../widgets/location_picker_sheet.dart';
+import '../../widgets/product_card.dart';
+import 'product_view_screen.dart';
 
 class ShopScreen extends StatefulWidget {
-  const ShopScreen({super.key});
+  // Back arrow action. In the bottom-nav shell this returns to the Home tab;
+  // when pushed as a route it falls back to popping.
+  final VoidCallback? onBack;
+  const ShopScreen({super.key, this.onBack});
   @override State<ShopScreen> createState() => _ShopState();
 }
 
@@ -28,7 +33,11 @@ class _ShopState extends State<ShopScreen> {
   bool _loadingMore = false;
   bool _hasMore = true;
   String _selectedCat = 'All';
+  // Client-side sort of the loaded products: relevance | price_asc | price_desc | discount
+  String _sort = 'relevance';
+  static const _sortLabels = {'relevance': 'Recommended', 'price_asc': 'Price: low to high', 'price_desc': 'Price: high to low', 'discount': 'Biggest discount'};
   final _searchCtrl = TextEditingController();
+  final _searchFocus = FocusNode();
   final _scrollCtrl = ScrollController();
   Timer? _debounce;
   int _page = 1, _pages = 1, _total = 0;
@@ -44,7 +53,7 @@ class _ShopState extends State<ShopScreen> {
       }
     });
   }
-  @override void dispose() { _searchCtrl.dispose(); _scrollCtrl.dispose(); _debounce?.cancel(); super.dispose(); }
+  @override void dispose() { _searchCtrl.dispose(); _searchFocus.dispose(); _scrollCtrl.dispose(); _debounce?.cancel(); super.dispose(); }
 
   Future<void> _load() async {
     setState(() => _loading = true);
@@ -109,66 +118,85 @@ class _ShopState extends State<ShopScreen> {
     _debounce = Timer(const Duration(milliseconds: 500), _filter);
   }
 
-  void _addToCart(Map<String, dynamic> data) {
-    HapticFeedback.lightImpact();
-    context.read<CartProvider>().add(data);
-  }
-
-  void _removeFromCart(int id) {
-    HapticFeedback.lightImpact();
-    context.read<CartProvider>().remove(id);
+  List<dynamic> get _shown {
+    if (_sort == 'relevance') return _products;
+    double disc(dynamic p) { final m = asMap(p); final mrp = asDouble(m['mrp']); final pr = asDouble(m['price']); return mrp > pr ? (mrp - pr) / mrp : 0; }
+    final l = [..._products];
+    switch (_sort) {
+      case 'price_asc': l.sort((a, b) => asDouble(asMap(a)['price']).compareTo(asDouble(asMap(b)['price'])));
+      case 'price_desc': l.sort((a, b) => asDouble(asMap(b)['price']).compareTo(asDouble(asMap(a)['price'])));
+      case 'discount': l.sort((a, b) => disc(b).compareTo(disc(a)));
+    }
+    return l;
   }
 
   @override
   Widget build(BuildContext ctx) {
     final cart = ctx.watch<CartProvider>();
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF9F9F9),
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.dark.copyWith(statusBarColor: Colors.transparent),
+      child: Scaffold(
+      backgroundColor: Colors.transparent,
       body: Stack(children: [
         Column(children: [
           _buildHeader(ctx),
-          _buildSearchSection(),
-          Expanded(child: RefreshIndicator(
+          // Products scroll underneath a floating liquid-glass search bar.
+          Expanded(child: Stack(children: [
+            Positioned.fill(child: RefreshIndicator(
             onRefresh: _load, color: C.forest,
             child: _loading
-              ? GridView.builder(padding: const EdgeInsets.all(16), gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 16, mainAxisSpacing: 16, childAspectRatio: 0.75), itemCount: 6, itemBuilder: (_,__) => const GSkelCard())
+              ? GridView.builder(padding: const EdgeInsets.fromLTRB(16, 84, 16, 16), gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 2, crossAxisSpacing: 12, mainAxisSpacing: 14, childAspectRatio: 0.58), itemCount: 6, itemBuilder: (_,__) => Container(decoration: BoxDecoration(color: kCardTop.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white.withValues(alpha: 0.7)))))
               : _products.isEmpty
-                ? const GEmpty(title: 'No items found', sub: 'Try a different category or search term', icon: Icons.shopping_bag_outlined)
+                ? ListView(padding: const EdgeInsets.only(top: 76), children: [GEmpty(title: 'No items found', sub: 'Try a different category or search term.', icon: Icons.shopping_bag_outlined,
+                    action: (_selectedCat != 'All' || _searchCtrl.text.isNotEmpty)
+                      ? GBtn(label: 'Clear filters', onTap: () { _searchCtrl.clear(); setState(() => _selectedCat = 'All'); _filter(); }, w: 200, h: 48)
+                      : null)])
                 : CustomScrollView(
                     controller: _scrollCtrl,
                     physics: const AlwaysScrollableScrollPhysics(),
                     slivers: [
                       SliverToBoxAdapter(
                         child: Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                          child: Text('$_total product${_total == 1 ? '' : 's'}', style: GoogleFonts.poppins(fontSize: 12, color: Colors.black45, fontWeight: FontWeight.w600)),
+                          padding: const EdgeInsets.fromLTRB(16, 80, 16, 0),
+                          child: Text('$_total product${_total == 1 ? '' : 's'}', style: GoogleFonts.poppins(fontSize: 12, color: V.fog, fontWeight: FontWeight.w600)),
                         ),
                       ),
+                      if (_selectedCat != 'All' || _sort != 'relevance') SliverToBoxAdapter(child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                        // Applied filters as removable chips — no sideways scrolling.
+                        child: Wrap(spacing: 8, runSpacing: 8, children: [
+                          if (_selectedCat != 'All') VActiveFilter(label: _selectedCat, onClear: () { setState(() => _selectedCat = 'All'); _filter(); }),
+                          if (_sort != 'relevance') VActiveFilter(label: _sortLabels[_sort]!, onClear: () => setState(() => _sort = 'relevance')),
+                        ]),
+                      )),
+                      // Two cards per row; each row is as tall as its tallest
+                      // card so full product names are always visible.
                       SliverPadding(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                        sliver: SliverGrid(
-                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            crossAxisSpacing: 10,
-                            mainAxisSpacing: 10,
-                            childAspectRatio: 0.65,
-                          ),
+                        padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+                        sliver: SliverList(
                           delegate: SliverChildBuilderDelegate(
-                            (_, i) => _ProductTile(
-                              pData: asMap(_products[i]),
-                              qty: cart.qty(asInt(_products[i]['id'])),
-                              onAdd: () => _addToCart(asMap(_products[i])),
-                              onRemove: () => _removeFromCart(asInt(_products[i]['id'])),
-                              onTap: () => _showDetail(asMap(_products[i])),
-                            ).animate().fadeIn(delay: Duration(milliseconds: (i % 24) * 30)).slideY(begin: 0.05, end: 0),
-                            childCount: _products.length,
+                            (_, r) {
+                              final shown = _shown;
+                              final cards = [
+                                for (var i = r * 2; i < r * 2 + 2 && i < shown.length; i++)
+                                  GProductCard(pData: asMap(shown[i]), onTap: () => _showDetail(i)),
+                              ];
+                              final row = Padding(
+                                padding: const EdgeInsets.only(bottom: 14),
+                                child: GProductGridRow(cards: cards),
+                              );
+                              // Entrance animation only for the first screenful —
+                              // animating every row while scrolling costs frames.
+                              return r < 4 ? row.animate().fadeIn(delay: Duration(milliseconds: r * 50)).slideY(begin: 0.05, end: 0) : row;
+                            },
+                            childCount: (_products.length + 1) ~/ 2,
                           ),
                         ),
                       ),
                       SliverToBoxAdapter(
                         child: Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 140),
+                          padding: EdgeInsets.fromLTRB(16, 8, 16, MediaQuery.of(ctx).padding.bottom + 110),
                           child: _loadingMore
                             ? const Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: C.forest)))
                             : !_hasMore && _products.isNotEmpty
@@ -179,53 +207,77 @@ class _ShopState extends State<ShopScreen> {
                     ],
                   ),
           )),
+            Positioned(top: 0, left: 0, right: 0, child: _buildSearchSection()),
+          ])),
         ]),
         if (cart.count > 0) _buildCartBar(ctx, cart.count, cart.total, cart.items.length),
       ]),
-    );
+    ));
   }
 
-  void _showDetail(Map<String, dynamic> pData) => showProductDetailSheet(context, pData);
+  Future<void> _showDetail(int index) async {
+    final res = await ProductViewScreen.open(context, _shown, index);
+    if (res == 'search' && mounted) _searchFocus.requestFocus();
+  }
 
-  Widget _buildHeader(BuildContext ctx) => Container(
-    width: double.infinity,
-    decoration: const BoxDecoration(color: C.forest),
-    padding: EdgeInsets.fromLTRB(20, MediaQuery.of(ctx).padding.top + 8, 20, 24),
-    child: Row(children: [
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('Plant Shop', style: GoogleFonts.poppins(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.white)),
-        Text('Premium seeds, tools & care', style: p(12, color: Colors.white.withOpacity(0.7))),
-      ])),
-      GestureDetector(
-        onTap: () => Navigator.pushNamed(ctx, '/wishlist'),
-        child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.12), shape: BoxShape.circle), child: const Icon(Icons.favorite_border_rounded, color: Colors.white, size: 22)),
-      ),
-      const SizedBox(width: 10),
-      GestureDetector(
-        onTap: () => Navigator.pushNamed(ctx, '/shop/orders'),
-        child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.12), shape: BoxShape.circle), child: const Icon(Icons.history_rounded, color: Colors.white, size: 22)),
-      ),
-    ]),
+  static IconData _catIcon(String c) {
+    final k = c.toLowerCase();
+    if (k == 'all') return Icons.apps_rounded;
+    if (k.contains('plant')) return Icons.local_florist_outlined;
+    if (k.contains('pot') || k.contains('planter')) return Icons.yard_outlined;
+    if (k.contains('seed')) return Icons.grain_rounded;
+    if (k.contains('fertil') || k.contains('soil') || k.contains('compost') || k.contains('manure')) return Icons.compost_outlined;
+    if (k.contains('pest') || k.contains('spray')) return Icons.pest_control_outlined;
+    if (k.contains('tool')) return Icons.handyman_outlined;
+    if (k.contains('decor') || k.contains('stand')) return Icons.chair_outlined;
+    return Icons.eco_outlined;
+  }
+
+  // Shared glass filter sheet: category tiles + sort list.
+  Future<void> _openFilters() async {
+    final res = await showFilterSheet(context,
+      title: 'Filter & sort',
+      sections: [
+        VFilterSection(title: 'Category', defaultValue: 'All', options: [
+          for (final c in _categories.map((e) => e.toString())) VFilterOption(c, c, icon: _catIcon(c)),
+        ]),
+        VFilterSection(title: 'Sort by', defaultValue: 'relevance', tiles: false, options: [
+          for (final e in _sortLabels.entries) VFilterOption(e.key, e.value),
+        ]),
+      ],
+      current: [_selectedCat, _sort],
+    );
+    if (res == null || !mounted) return;
+    final catChanged = res[0] != _selectedCat;
+    setState(() { _selectedCat = res[0]; _sort = res[1]; });
+    if (catChanged) _filter();
+  }
+
+  void _back(BuildContext ctx) => widget.onBack != null ? widget.onBack!() : Navigator.maybePop(ctx);
+
+  Widget _buildHeader(BuildContext ctx) => VPageHeader(
+    title: 'Shop',
+    subtitle: 'Plants, pots, seeds and everything to care for them.',
+    onBack: () => _back(ctx),
+    trailing: VPillAction(label: 'My orders', icon: Icons.receipt_long_outlined, onTap: () => Navigator.pushNamed(ctx, '/shop/orders')),
   );
 
   Widget _buildSearchSection() => Container(
-    color: Colors.white,
-    padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+    padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       // ── Search: single container, stripped TextField ──────────────────
-      Container(
-        height: 50,
-        decoration: BoxDecoration(
-          color: const Color(0xFFF3F7F0),
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(color: C.border, width: 1.2),
-        ),
-        child: Row(children: [
-          const SizedBox(width: 14),
-          const Icon(Icons.search_rounded, color: C.t4, size: 20),
+      VLiquid(
+        radius: 99,
+        tint: const Color(0xA6FFFFFF),
+        thickness: 26,
+        blur: 3,
+        child: SizedBox(height: 54, child: Row(children: [
+          const SizedBox(width: 18),
+          const Icon(Icons.search_rounded, color: V.fog, size: 21),
           const SizedBox(width: 10),
           Expanded(child: TextField(
             controller: _searchCtrl,
+            focusNode: _searchFocus,
             onChanged: _onSearch,
             style: p(14, w: FontWeight.w600, color: C.t1),
             decoration: InputDecoration(
@@ -242,35 +294,13 @@ class _ShopState extends State<ShopScreen> {
               contentPadding:     EdgeInsets.zero,
             ),
           )),
-        ]),
+          // Filter & sort — opens the glass sheet
+          Padding(
+            padding: const EdgeInsets.only(right: 5),
+            child: VFilterButton(compact: true, glass: false, active: _selectedCat != 'All' || _sort != 'relevance', onTap: _openFilters),
+          ),
+        ])),
       ),
-      const SizedBox(height: 12),
-      // ── Category pills ────────────────────────────────────────────────
-      SizedBox(height: 36, child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        itemCount: _categories.length,
-        itemBuilder: (_, i) {
-          final sel = _categories[i] == _selectedCat;
-          return GestureDetector(
-            onTap: () { setState(() => _selectedCat = _categories[i]); _filter(); },
-            child: AnimatedContainer(
-              duration: 200.ms,
-              margin: const EdgeInsets.only(right: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                gradient: sel ? const LinearGradient(colors: [C.green, C.forest], begin: Alignment.topLeft, end: Alignment.bottomRight) : null,
-                color: sel ? null : const Color(0xFFF3F7F0),
-                borderRadius: BorderRadius.circular(9),
-                border: Border.all(color: sel ? Colors.transparent : C.border, width: 1.2),
-              ),
-              child: Center(child: Text(
-                _categories[i],
-                style: p(12, w: sel ? FontWeight.w700 : FontWeight.w500, color: sel ? Colors.white : C.t2),
-              )),
-            ),
-          );
-        },
-      )),
     ]),
   );
 
@@ -285,153 +315,13 @@ class _ShopState extends State<ShopScreen> {
   );
 }
 
-// Opens the product detail sheet from anywhere (shop grid, wishlist screen).
+// Opens the product detail sheet from anywhere (e.g. the product viewer).
 void showProductDetailSheet(BuildContext context, Map<String, dynamic> pData) {
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    useSafeArea: true,
+  showGlassSheet(context,
     builder: (_) => _ProductDetails(pData: pData, onAdd: () {
       HapticFeedback.lightImpact();
       context.read<CartProvider>().add(pData);
     }),
-  );
-}
-
-class _ProductTile extends StatefulWidget {
-  final Map<String, dynamic> pData; final int qty; final VoidCallback onAdd, onRemove, onTap;
-  const _ProductTile({required this.pData, required this.qty, required this.onAdd, required this.onRemove, required this.onTap});
-  @override State<_ProductTile> createState() => _ProductTileState();
-}
-
-class _ProductTileState extends State<_ProductTile> {
-  bool _pressed = false;
-
-  String _getImageUrl(Map<String, dynamic> pData) {
-    if (pData['images'] is List && (pData['images'] as List).isNotEmpty) {
-      final url = (pData['images'] as List).first.toString();
-      if (url.isNotEmpty && url != 'null') return url;
-    }
-    if (pData['image'] != null) {
-      final url = pData['image'].toString();
-      if (url.isNotEmpty && url != 'null') return url;
-    }
-    return 'https://gkm.gobt.in/uploads/shop/placeholder.jpg';
-  }
-
-  @override
-  Widget build(BuildContext ctx) {
-    final pData = widget.pData;
-    final price = asDouble(pData['price']);
-    final mrp   = asDouble(pData['mrp']);
-    final discount = mrp > price ? ((mrp - price) / mrp * 100).round() : 0;
-    final catName = asStr(asMap(pData['category'])['name'], '');
-
-    return GestureDetector(
-      onTap: widget.onTap,
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapUp: (_) => setState(() => _pressed = false),
-      onTapCancel: () => setState(() => _pressed = false),
-      child: AnimatedScale(
-        scale: _pressed ? 0.96 : 1.0,
-        duration: const Duration(milliseconds: 120),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: Colors.black.withOpacity(0.04)),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 14, offset: const Offset(0, 4))],
-          ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // ── Image area ──────────────────────────────────────────────
-            Stack(children: [
-              Container(
-                height: 148, width: double.infinity,
-                decoration: const BoxDecoration(color: Color(0xFFF1F5F1), borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-                child: ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-                  child: CachedNetworkImage(
-                    imageUrl: _getImageUrl(pData),
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                    height: 148,
-                    placeholder: (_, __) => const Center(child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF4CAF50))),
-                    errorWidget: (_, __, ___) => Center(child: Icon(Icons.eco_rounded, color: C.green.withOpacity(0.4), size: 48)),
-                  ),
-                ),
-              ),
-              // Wishlist heart
-              Positioned(top: 10, left: 10, child: GWishHeart(product: pData, size: 30)),
-              // Discount badge
-              if (discount > 0)
-                Positioned(top: 10, right: 10,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-                    decoration: BoxDecoration(color: Colors.red.shade600, borderRadius: BorderRadius.circular(8)),
-                    child: Text('$discount% OFF', style: p(9, w: FontWeight.w900, color: Colors.white)),
-                  )),
-              // Cart qty counter / add button
-              Positioned(bottom: 10, right: 10,
-                child: widget.qty > 0
-                  ? Container(
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 8, offset: const Offset(0, 2))]),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        _QtyBtn(icon: Icons.remove_rounded, onTap: widget.onRemove, small: true),
-                        Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: Text('${widget.qty}', style: p(13, w: FontWeight.w900, color: C.forest))),
-                        _QtyBtn(icon: Icons.add_rounded, onTap: widget.onAdd, small: true),
-                      ]),
-                    )
-                  : GestureDetector(
-                      onTap: widget.onAdd,
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(colors: [C.green, C.forest], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                          shape: BoxShape.circle,
-                          boxShadow: [BoxShadow(color: C.green.withOpacity(0.4), blurRadius: 10, offset: const Offset(0, 4))],
-                        ),
-                        child: const Icon(Icons.add_rounded, color: Colors.white, size: 20),
-                      ),
-                    ),
-              ),
-            ]),
-
-            // ── Info area ────────────────────────────────────────────────
-            Expanded(
-              child: Padding(padding: const EdgeInsets.fromLTRB(10, 8, 10, 10), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                if (catName.isNotEmpty)
-                  Text(catName, style: p(9, w: FontWeight.w600, color: C.forest.withOpacity(0.65))),
-                const SizedBox(height: 2),
-                Text(asStr(pData['name']), style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w800, color: Colors.black, height: 1.2), maxLines: 2, overflow: TextOverflow.ellipsis),
-                const Spacer(),
-                Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-                  Text('₹${price.toStringAsFixed(0)}', style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w900, color: C.green)),
-                  if (mrp > price) ...[
-                    const SizedBox(width: 4),
-                    Flexible(child: Text('₹${mrp.toStringAsFixed(0)}', style: const TextStyle(decoration: TextDecoration.lineThrough, decorationColor: Color(0xFF9AAA94), color: Color(0xFF9AAA94), fontSize: 10, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
-                  ],
-                ]),
-              ])),
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
-}
-
-class _QtyBtn extends StatelessWidget {
-  final IconData icon; final VoidCallback onTap; final bool small;
-  const _QtyBtn({required this.icon, required this.onTap, this.small = false});
-  @override
-  Widget build(BuildContext ctx) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      width: small ? 26 : 32, height: small ? 26 : 32,
-      decoration: BoxDecoration(color: C.forest.withOpacity(0.08), borderRadius: BorderRadius.circular(8)),
-      child: Icon(icon, size: small ? 14 : 16, color: C.forest),
-    ),
   );
 }
 
@@ -499,8 +389,7 @@ class _ProductDetailsState extends State<_ProductDetails> {
     final outOfStock = stock != null && stock <= 0;
 
     return Container(
-      height: screenH - topInset,
-      decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(32))),
+      height: (screenH - topInset) * 0.9,
       child: Column(children: [
         // ── Drag handle ──────────────────────────────────────────────────
         const SizedBox(height: 12),
@@ -521,7 +410,7 @@ class _ProductDetailsState extends State<_ProductDetails> {
                     itemCount: images.length,
                     itemBuilder: (_, i) => ClipRRect(
                       borderRadius: BorderRadius.circular(20),
-                      child: CachedNetworkImage(
+                      child: CachedNetworkImage(fadeInDuration: const Duration(milliseconds: 120), fadeOutDuration: Duration.zero, placeholderFadeInDuration: Duration.zero, memCacheWidth: 900, 
                         imageUrl: images[i],
                         fit: BoxFit.contain,
                         width: double.infinity,
@@ -533,7 +422,6 @@ class _ProductDetailsState extends State<_ProductDetails> {
                       ),
                     ),
                   ),
-                  Positioned(top: 8, right: 12, child: GWishHeart(product: _data, size: 38)),
                   if (images.length > 1)
                     Positioned(
                       left: 0, right: 0, bottom: 6,
@@ -609,10 +497,12 @@ class _ProductDetailsState extends State<_ProductDetails> {
                   // Description — prefers the full long_description once loaded
                   Text('Product Details', style: p(14, w: FontWeight.w800, color: C.t1)),
                   const SizedBox(height: 6),
-                  Text(
-                    longDesc.isNotEmpty ? longDesc : asStr(_data['description'], 'This premium gardening product is designed to keep your garden healthy and vibrant.'),
-                    style: p(13, color: C.t3, h: 1.6),
-                  ),
+                  Builder(builder: (_) {
+                    String clean(dynamic v) { final t = asStr(v).trim(); return t == 'null' ? '' : t; }
+                    final text = clean(longDesc).isNotEmpty ? clean(longDesc) : clean(_data['description']);
+                    return Text(text.isNotEmpty ? text : 'No description available for this product yet.',
+                      style: p(13, color: C.t3, h: 1.6));
+                  }),
 
                   // Features — clean checklist, not colorful chips
                   if (features.isNotEmpty) ...[
@@ -687,12 +577,15 @@ class _ProductDetailsState extends State<_ProductDetails> {
         // ── Sticky Add to Cart ─────────────────────────────────────────────
         Container(
           padding: EdgeInsets.fromLTRB(20, 14, 20, MediaQuery.of(ctx).padding.bottom + 16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: const Border(top: BorderSide(color: Color(0xFFEEF4EA))),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 16, offset: const Offset(0, -6))],
+          decoration: BoxDecoration(border: Border(top: BorderSide(color: V.ink.withValues(alpha: 0.06)))),
+          child: GCartStepper(
+            qty: ctx.select<CartProvider, int>((c) => c.qty(asInt(_data['id']))),
+            onAdd: widget.onAdd,
+            onRemove: () { HapticFeedback.lightImpact(); ctx.read<CartProvider>().remove(asInt(_data['id'])); },
+            disabled: outOfStock,
+            height: 50,
+            light: false,
           ),
-          child: GBtn(label: outOfStock ? 'Out of Stock' : 'Add to Cart', onTap: outOfStock ? null : () { widget.onAdd(); Navigator.pop(ctx); }, bg: C.forest),
         ),
       ]),
     );
@@ -856,305 +749,272 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final loc = context.watch<LocationProvider>();
     final visibleCart = _visibleCart;
     final totalValue = _subtotal;
+    final grand = (totalValue - _discount).clamp(0, double.infinity);
+
+    Widget billLine(String l, String v, {Color? color, bool strong = false}) => Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(children: [
+        Text(l, style: strong ? vx(18, w: FontWeight.w600, color: V.ink) : p(13, color: color ?? V.fog)),
+        const Spacer(),
+        Text(v, style: strong ? vx(24, w: FontWeight.w600, color: V.ink) : p(13, w: FontWeight.w600, color: color ?? V.ink)),
+      ]),
+    );
 
     return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white, elevation: 0,
-        leading: IconButton(onPressed: () => Navigator.pop(ctx), icon: const Icon(Icons.arrow_back, color: Colors.black)),
-        title: Text('Checkout', style: p(18, w: FontWeight.w800, color: Colors.black)),
-        actions: [
-          if (visibleCart.isNotEmpty)
-            TextButton(onPressed: _clearCart, child: Text('Clear cart', style: p(13, w: FontWeight.w700, color: C.red))),
-        ],
-      ),
-      body: SingleChildScrollView(padding: const EdgeInsets.all(24), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-         GSec('Service Address'),
-         const SizedBox(height: 12),
-         GestureDetector(
-           onTap: () async {
-             final picked = await showLocationPicker(context);
-             if (picked != null) loc.save(picked);
-           },
-           child: Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: const Color(0xFFF9F9F9), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.black.withOpacity(0.05))), child: Row(children: [
-             const Icon(Icons.location_on_rounded, color: C.green), const SizedBox(width: 14),
-             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-               Text(loc.hasLocation ? loc.label : 'Select Service Address', style: p(14, w: FontWeight.w700)),
-               if (loc.hasLocation) Text(loc.fullAddress, style: p(12, color: Colors.black45), maxLines: 2),
-             ])),
-             const Icon(Icons.chevron_right_rounded, color: Colors.black26),
-           ])),
-         ),
-         const SizedBox(height: 32),
-         GSec('Order Summary'),
-         const SizedBox(height: 12),
-         ...visibleCart.map((e) {
-            final prod = asMap(e['product']);
-            final prodId = asInt(prod['id']);
-            final q = _qtyMap[prodId] ?? asInt(e['qty']);
-            final price = asDouble(prod['price']);
-            final stock = _stockFor(prodId);
-            final atMax = stock != null && q >= stock;
-            return Padding(padding: const EdgeInsets.only(bottom: 12), child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-               ClipRRect(
-                 borderRadius: BorderRadius.circular(8),
-                 child: CachedNetworkImage(
-                   imageUrl: _getImageUrl(prod),
-                   width: 48, height: 48, fit: BoxFit.cover,
-                   placeholder: (_, __) => Container(color: Colors.grey[100]),
-                   errorWidget: (_, __, ___) => Container(color: Colors.grey[100], child: const Icon(Icons.eco)),
-                 )
-               ),
-               const SizedBox(width: 12),
-               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                 Text(asStr(prod['name']), style: p(14, w: FontWeight.w700), maxLines: 1),
-                 Text('₹${price.toStringAsFixed(0)}', style: p(12, color: Colors.black45)),
-                 if (atMax) Text('Max stock reached', style: p(10, w: FontWeight.w600, color: Colors.orange.shade800)),
-               ])),
-               // Quantity control — increment disables once stock (if known) is reached
-               Container(
-                 decoration: BoxDecoration(color: const Color(0xFFF3F7F0), borderRadius: BorderRadius.circular(10), border: Border.all(color: C.border)),
-                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                   GestureDetector(
-                     onTap: () => _decrementQty(prodId),
-                     child: Container(
-                       width: 28, height: 28,
-                       alignment: Alignment.center,
-                       decoration: BoxDecoration(color: Colors.white.withOpacity(0.5), borderRadius: BorderRadius.circular(8)),
-                       child: Icon(Icons.remove_rounded, size: 16, color: C.forest),
-                     ),
-                   ),
-                   Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: Text('$q', style: p(13, w: FontWeight.w900, color: C.forest))),
-                   GestureDetector(
-                     onTap: atMax ? null : () => _incrementQty(prodId),
-                     child: Container(
-                       width: 28, height: 28,
-                       alignment: Alignment.center,
-                       decoration: BoxDecoration(color: Colors.white.withOpacity(atMax ? 0.2 : 0.5), borderRadius: BorderRadius.circular(8)),
-                       child: Icon(Icons.add_rounded, size: 16, color: atMax ? C.t4 : C.forest),
-                     ),
-                   ),
-                 ]),
-               ),
-               const SizedBox(width: 10),
-               Text('₹${(price * q).toStringAsFixed(0)}', style: p(14, w: FontWeight.w800)),
-               const SizedBox(width: 8),
-               // Remove this line entirely, regardless of quantity
-               GestureDetector(
-                 onTap: () => _removeLine(prodId, asStr(prod['name'])),
-                 child: Container(
-                   width: 28, height: 28,
-                   alignment: Alignment.center,
-                   decoration: BoxDecoration(color: C.red.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8)),
-                   child: const Icon(Icons.close_rounded, size: 16, color: C.red),
-                 ),
-               ),
-            ]));
-         }),
-         const Divider(height: 48),
-
-         // ── Coupon ───────────────────────────────────────────────────────
-         _couponSection(),
-         const SizedBox(height: 20),
-
-         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-           Text('Subtotal', style: p(13, color: C.t2)),
-           Text('₹${totalValue.toStringAsFixed(0)}', style: p(13, w: FontWeight.w700, color: C.t1)),
-         ]),
-         if (_discount > 0) ...[
-           const SizedBox(height: 8),
-           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-             Text('Discount (${_appliedCode ?? ''})', style: p(13, color: C.green, w: FontWeight.w700)),
-             Text('− ₹${_discount.toStringAsFixed(0)}', style: p(13, w: FontWeight.w800, color: C.green)),
-           ]),
-         ],
-         const SizedBox(height: 12),
-         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-           Text('Order Total', style: p(18, w: FontWeight.w900)),
-           Text('₹${(totalValue - _discount).clamp(0, double.infinity).toStringAsFixed(0)}', style: p(24, w: FontWeight.w900, color: C.green)),
-         ]),
-         const SizedBox(height: 24),
-
-         // ── GST section ──────────────────────────────────────────────────
-         Container(
-           padding: const EdgeInsets.all(16),
-           decoration: BoxDecoration(
-             color: const Color(0xFFF3F7F0),
-             borderRadius: BorderRadius.circular(16),
-             border: Border.all(color: C.border, width: 1.2),
-           ),
-           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-             Row(children: [
-               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                 Text('Claim GST Invoice', style: p(14, w: FontWeight.w800, color: C.t1)),
-                 Text('For business purchases only', style: p(11, color: C.t3)),
-               ])),
-               GestureDetector(
-                 onTap: () => setState(() => _applyGst = !_applyGst),
-                 child: AnimatedContainer(
-                   duration: const Duration(milliseconds: 200),
-                   width: 46, height: 26,
-                   padding: const EdgeInsets.all(3),
-                   decoration: BoxDecoration(
-                     borderRadius: BorderRadius.circular(13),
-                     color: _applyGst ? C.forest : Colors.black26,
-                   ),
-                   child: AnimatedAlign(
-                     duration: const Duration(milliseconds: 200),
-                     alignment: _applyGst ? Alignment.centerRight : Alignment.centerLeft,
-                     child: Container(width: 20, height: 20, decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle)),
-                   ),
-                 ),
-               ),
-             ]),
-             if (_applyGst) ...[
-               const SizedBox(height: 16),
-               Text('State of Supply', style: p(12, w: FontWeight.w700, color: C.t2)),
-               const SizedBox(height: 6),
-               Container(
-                 padding: const EdgeInsets.symmetric(horizontal: 12),
-                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: C.border)),
-                 child: DropdownButtonHideUnderline(
-                   child: DropdownButton<String>(
-                     value: _gstState,
-                     isExpanded: true,
-                     style: p(13, color: C.t1),
-                     items: const [
-                       DropdownMenuItem(value: 'Uttar Pradesh', child: Text('Uttar Pradesh')),
-                       DropdownMenuItem(value: 'Delhi', child: Text('Delhi')),
-                       DropdownMenuItem(value: 'Maharashtra', child: Text('Maharashtra')),
-                       DropdownMenuItem(value: 'Karnataka', child: Text('Karnataka')),
-                       DropdownMenuItem(value: 'Tamil Nadu', child: Text('Tamil Nadu')),
-                       DropdownMenuItem(value: 'Gujarat', child: Text('Gujarat')),
-                       DropdownMenuItem(value: 'Rajasthan', child: Text('Rajasthan')),
-                       DropdownMenuItem(value: 'West Bengal', child: Text('West Bengal')),
-                       DropdownMenuItem(value: 'Haryana', child: Text('Haryana')),
-                       DropdownMenuItem(value: 'Bihar', child: Text('Bihar')),
-                       DropdownMenuItem(value: 'Other', child: Text('Other State')),
-                     ],
-                     onChanged: (v) => setState(() => _gstState = v ?? _gstState),
-                   ),
-                 ),
-               ),
-               const SizedBox(height: 8),
-               Container(
-                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                 decoration: BoxDecoration(color: _gstState == 'Uttar Pradesh' ? C.green.withValues(alpha: 0.08) : Colors.orange.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8)),
-                 child: Text(
-                   _gstState == 'Uttar Pradesh' ? 'SGST + CGST will be applied (intra-state)' : 'IGST will be applied (inter-state)',
-                   style: p(11, w: FontWeight.w600, color: _gstState == 'Uttar Pradesh' ? C.forest : Colors.orange.shade800),
-                 ),
-               ),
-               const SizedBox(height: 12),
-               _buildGstField(label: 'GSTIN', ctrl: _gstinCtrl, hint: 'e.g. 09AAAAA0000A1Z5'),
-               const SizedBox(height: 8),
-               _buildGstField(label: 'Business Name', ctrl: _bizCtrl, hint: 'Registered business name'),
-             ],
-           ]),
-         ),
-
-         const SizedBox(height: 32),
-         GBtn(label: 'Confirm Order', loading: _busy, onTap: (loc.hasLocation && !_busy) ? _place : null, bg: C.forest),
-         if (!loc.hasLocation) Padding(padding: const EdgeInsets.only(top: 12), child: Center(child: Text('Please select an address first', style: p(12, color: Colors.red[400], w: FontWeight.w600)))),
-      ])),
+      backgroundColor: Colors.transparent,
+      body: Stack(children: [
+        CustomScrollView(slivers: [
+          SliverToBoxAdapter(child: VPageHeader(
+            title: 'Checkout',
+            subtitle: '${visibleCart.length} item${visibleCart.length == 1 ? '' : 's'} in your cart',
+            trailing: visibleCart.isNotEmpty
+              ? GestureDetector(onTap: _clearCart, child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Text('Clear cart', style: p(13, w: FontWeight.w600, color: C.red))))
+              : null,
+          )),
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(16, 20, 16, MediaQuery.of(ctx).padding.bottom + 120),
+            sliver: SliverList(delegate: SliverChildListDelegate([
+              // ── Deliver to ─────────────────────────────────────────────
+              GestureDetector(
+                onTap: () async {
+                  final picked = await showLocationPicker(context);
+                  if (picked != null) loc.save(picked);
+                },
+                child: GCard(
+                  padding: const EdgeInsets.all(16),
+                  radius: BorderRadius.circular(22),
+                  child: Row(children: [
+                    const VOrb(icon: Icons.location_on_outlined, size: 44),
+                    const SizedBox(width: 14),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Deliver to', style: p(11.5, color: V.fog)),
+                      Text(loc.hasLocation ? loc.label : 'Choose an address', style: vx(17, w: FontWeight.w600, color: V.ink)),
+                      if (loc.hasLocation) Text(loc.fullAddress, style: p(12, color: V.fog, h: 1.35), maxLines: 2, overflow: TextOverflow.ellipsis),
+                    ])),
+                    Text('Change', style: p(12.5, w: FontWeight.w600, color: V.leaf)),
+                  ]),
+                ),
+              ),
+              const SizedBox(height: 24),
+              GSec('Items'),
+              const SizedBox(height: 12),
+              GCard(
+                padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+                radius: BorderRadius.circular(22),
+                child: Column(children: [
+                  for (var k = 0; k < visibleCart.length; k++) ...[
+                    if (k > 0) Container(height: 1, color: V.ink.withValues(alpha: 0.06)),
+                    Builder(builder: (_) {
+                      final prod = asMap(visibleCart[k]['product']);
+                      final prodId = asInt(prod['id']);
+                      final q = _qtyMap[prodId] ?? asInt(visibleCart[k]['qty']);
+                      final price = asDouble(prod['price']);
+                      final stock = _stockFor(prodId);
+                      final atMax = stock != null && q >= stock;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: Row(children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(14),
+                            child: CachedNetworkImage(fadeInDuration: const Duration(milliseconds: 120), fadeOutDuration: Duration.zero, placeholderFadeInDuration: Duration.zero, memCacheWidth: 900, 
+                              imageUrl: _getImageUrl(prod), width: 58, height: 58, fit: BoxFit.cover,
+                              placeholder: (_, __) => Container(color: V.mint),
+                              errorWidget: (_, __, ___) => Container(color: V.mint, child: const Icon(Icons.local_florist_outlined, color: V.deep)),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(asStr(prod['name']), maxLines: 2, overflow: TextOverflow.ellipsis, style: p(13.5, w: FontWeight.w600, color: V.ink, h: 1.3)),
+                            const SizedBox(height: 4),
+                            Row(children: [
+                              Text('₹${(price * q).toStringAsFixed(0)}', style: vx(16, w: FontWeight.w600, color: V.ink)),
+                              if (atMax) ...[
+                                const SizedBox(width: 8),
+                                Text('Max in stock', style: p(10.5, w: FontWeight.w600, color: C.amber)),
+                              ],
+                            ]),
+                          ])),
+                          const SizedBox(width: 8),
+                          // − qty + ; the minus on qty 1 removes the item
+                          Container(
+                            height: 36,
+                            decoration: BoxDecoration(color: V.mint, borderRadius: BorderRadius.circular(99)),
+                            child: Row(mainAxisSize: MainAxisSize.min, children: [
+                              GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () => q <= 1 ? _removeLine(prodId, asStr(prod['name'])) : _decrementQty(prodId),
+                                child: SizedBox(width: 34, height: 36, child: Icon(q <= 1 ? Icons.delete_outline_rounded : Icons.remove_rounded, size: 17, color: q <= 1 ? C.red : V.deep)),
+                              ),
+                              Text('$q', style: p(13.5, w: FontWeight.w700, color: V.deep)),
+                              GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: atMax ? null : () => _incrementQty(prodId),
+                                child: SizedBox(width: 34, height: 36, child: Icon(Icons.add_rounded, size: 17, color: atMax ? V.fog.withValues(alpha: 0.4) : V.deep)),
+                              ),
+                            ]),
+                          ),
+                        ]),
+                      );
+                    }),
+                  ],
+                ]),
+              ),
+              const SizedBox(height: 24),
+              GSec('Coupon'),
+              const SizedBox(height: 10),
+              _couponSection(),
+              const SizedBox(height: 24),
+              GSec('Bill'),
+              const SizedBox(height: 12),
+              GCard(
+                padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
+                radius: BorderRadius.circular(22),
+                child: Column(children: [
+                  billLine('Items', '₹${totalValue.toStringAsFixed(0)}'),
+                  if (_discount > 0) billLine('Coupon ${_appliedCode ?? ''}', '− ₹${_discount.toStringAsFixed(0)}', color: const Color(0xFF166534)),
+                  Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: CustomPaint(size: const Size(double.infinity, 1), painter: _HDash())),
+                  const SizedBox(height: 6),
+                  billLine('To pay', '₹${grand.toStringAsFixed(0)}', strong: true),
+                ]),
+              ),
+              const SizedBox(height: 16),
+              // ── GST invoice (business purchases) ───────────────────────
+              GCard(
+                padding: const EdgeInsets.all(16),
+                radius: BorderRadius.circular(22),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('GST invoice', style: vx(16, w: FontWeight.w600, color: V.ink)),
+                      Text('For business purchases', style: p(12, color: V.fog)),
+                    ])),
+                    Switch.adaptive(
+                      value: _applyGst,
+                      activeColor: V.leaf,
+                      onChanged: (v) => setState(() => _applyGst = v),
+                    ),
+                  ]),
+                  if (_applyGst) ...[
+                    const SizedBox(height: 14),
+                    Text('State of supply', style: p(12, w: FontWeight.w600, color: V.fog)),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.8), borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.white)),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _gstState,
+                          isExpanded: true,
+                          style: p(13.5, color: V.ink),
+                          items: const [
+                            DropdownMenuItem(value: 'Uttar Pradesh', child: Text('Uttar Pradesh')),
+                            DropdownMenuItem(value: 'Delhi', child: Text('Delhi')),
+                            DropdownMenuItem(value: 'Maharashtra', child: Text('Maharashtra')),
+                            DropdownMenuItem(value: 'Karnataka', child: Text('Karnataka')),
+                            DropdownMenuItem(value: 'Tamil Nadu', child: Text('Tamil Nadu')),
+                            DropdownMenuItem(value: 'Gujarat', child: Text('Gujarat')),
+                            DropdownMenuItem(value: 'Rajasthan', child: Text('Rajasthan')),
+                            DropdownMenuItem(value: 'West Bengal', child: Text('West Bengal')),
+                            DropdownMenuItem(value: 'Haryana', child: Text('Haryana')),
+                            DropdownMenuItem(value: 'Bihar', child: Text('Bihar')),
+                            DropdownMenuItem(value: 'Other', child: Text('Other State')),
+                          ],
+                          onChanged: (v) => setState(() => _gstState = v ?? _gstState),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(_gstState == 'Uttar Pradesh' ? 'SGST + CGST will apply (same state)' : 'IGST will apply (other state)',
+                      style: p(11.5, color: V.leaf)),
+                    const SizedBox(height: 12),
+                    _buildGstField(label: 'GSTIN', ctrl: _gstinCtrl, hint: 'e.g. 09AAAAA0000A1Z5'),
+                    const SizedBox(height: 10),
+                    _buildGstField(label: 'Business name', ctrl: _bizCtrl, hint: 'Registered business name'),
+                  ],
+                ]),
+              ),
+            ])),
+          ),
+        ]),
+        // Floating pay button — no bar behind it
+        Positioned(
+          left: 16, right: 16, bottom: MediaQuery.of(ctx).padding.bottom + 14,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (!loc.hasLocation) Padding(padding: const EdgeInsets.only(bottom: 8),
+              child: Text('Choose a delivery address first', style: p(12, color: C.red, w: FontWeight.w600))),
+            GBtn(label: 'Pay ₹${grand.toStringAsFixed(0)}', loading: _busy, glass: true, onTap: (loc.hasLocation && !_busy && visibleCart.isNotEmpty) ? _place : null),
+          ]),
+        ),
+      ]),
     );
   }
 
-  Widget _buildGstField({required String label, required TextEditingController ctrl, required String hint}) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(label, style: p(12, w: FontWeight.w700, color: C.t2)),
-      const SizedBox(height: 4),
-      TextField(
-        controller: ctrl,
-        style: p(13, color: C.t1),
-        decoration: InputDecoration(
-          hintText: hint,
-          hintStyle: TextStyle(color: C.t4, fontSize: 12),
-          filled: true,
-          fillColor: Colors.white,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: C.border)),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: C.border)),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: C.forest)),
-        ),
-      ),
-    ],
-  );
+  Widget _buildGstField({required String label, required TextEditingController ctrl, required String hint}) =>
+      GField(ctrl: ctrl, label: label, hint: hint);
 
   Widget _couponSection() {
     if (_appliedCode != null) {
       return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: C.green.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: C.green.withValues(alpha: 0.5), width: 1.2),
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(color: V.mint, borderRadius: BorderRadius.circular(18), border: Border.all(color: V.leaf.withValues(alpha: 0.4))),
         child: Row(children: [
-          const Icon(Icons.local_offer_rounded, color: C.green, size: 18),
+          const Icon(Icons.local_offer_outlined, color: V.deep, size: 18),
           const SizedBox(width: 10),
-          Expanded(child: Text('$_appliedCode applied', style: p(14, w: FontWeight.w800, color: C.green))),
-          GestureDetector(onTap: _removeCoupon, child: Text('REMOVE', style: p(12, w: FontWeight.w800, color: C.t3))),
+          Expanded(child: Text('$_appliedCode applied · you save ₹${_discount.toStringAsFixed(0)}', style: p(13.5, w: FontWeight.w600, color: V.deep))),
+          GestureDetector(onTap: _removeCoupon, child: Text('Remove', style: p(12.5, w: FontWeight.w600, color: C.red))),
         ]),
       );
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Expanded(child: TextField(
-          controller: _couponCtrl,
-          textCapitalization: TextCapitalization.characters,
-          style: p(14, w: FontWeight.w700, color: C.t1),
-          decoration: InputDecoration(
-            hintText: 'COUPON CODE',
-            hintStyle: TextStyle(color: C.t4, fontSize: 13, letterSpacing: 1),
-            filled: true, fillColor: const Color(0xFFF9F9F9),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: C.border)),
-            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: C.border)),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: C.forest)),
+      Container(
+        height: 54,
+        padding: const EdgeInsets.only(left: 18, right: 5),
+        decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.7), borderRadius: BorderRadius.circular(99), border: Border.all(color: Colors.white)),
+        child: Row(children: [
+          Expanded(child: TextField(
+            controller: _couponCtrl,
+            textCapitalization: TextCapitalization.characters,
+            style: p(14, w: FontWeight.w600, color: V.ink, ls: 1),
+            decoration: InputDecoration(
+              hintText: 'Enter coupon code', hintStyle: p(13.5, color: V.fog),
+              border: InputBorder.none, enabledBorder: InputBorder.none, focusedBorder: InputBorder.none,
+              filled: false, isDense: true, contentPadding: EdgeInsets.zero,
+            ),
+            onChanged: (_) { if (_couponMsg != null) setState(() => _couponMsg = null); },
+          )),
+          GestureDetector(
+            onTap: _couponBusy ? null : () => _applyCoupon(),
+            child: Container(
+              height: 44,
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: V.ink, borderRadius: BorderRadius.circular(99)),
+              child: _couponBusy
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : Text('Apply', style: p(13.5, w: FontWeight.w600, color: Colors.white)),
+            ),
           ),
-          onChanged: (_) { if (_couponMsg != null) setState(() => _couponMsg = null); },
-        )),
-        const SizedBox(width: 10),
-        GestureDetector(
-          onTap: _couponBusy ? null : () => _applyCoupon(),
-          child: Container(
-            height: 50,
-            padding: const EdgeInsets.symmetric(horizontal: 22),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: C.forest, borderRadius: BorderRadius.circular(12)),
-            child: _couponBusy
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : Text('Apply', style: p(14, w: FontWeight.w800, color: Colors.white)),
-          ),
-        ),
-      ]),
-      if (_couponMsg != null) Padding(padding: const EdgeInsets.only(top: 6), child: Text(_couponMsg!, style: p(12, w: FontWeight.w600, color: Colors.red[400]))),
+        ]),
+      ),
+      if (_couponMsg != null) Padding(padding: const EdgeInsets.only(top: 8, left: 6), child: Text(_couponMsg!, style: p(12, w: FontWeight.w500, color: C.red))),
       if (_couponsLoaded) ..._couponGroups(),
     ]);
   }
 
-  // Eligible coupons first (tap = apply), then "not eligible yet" rows greyed
-  // out with the server's reason. Eligibility and savings come from the
-  // server response — no client-side min-order guesswork.
+  // Eligible coupons first (tap = apply), then "not eligible yet" with the
+  // server's reason. Eligibility and savings come from the server.
   List<Widget> _couponGroups() {
     final rows = _availableCoupons.map((c) => asMap(c)).toList();
     if (rows.isEmpty) return const [];
     final eligible = rows.where((c) => c['eligible'] == true).toList();
     final ineligible = rows.where((c) => c['eligible'] != true).toList();
     return [
-      const SizedBox(height: 16),
-      if (eligible.isNotEmpty) ...[
-        Text('ELIGIBLE COUPONS', style: p(11, w: FontWeight.w800, color: C.green)),
-        const SizedBox(height: 8),
-        ...eligible.map(_availableCouponCard),
-      ] else
-        Text('No coupons eligible yet', style: p(12, w: FontWeight.w600, color: C.t3)),
+      const SizedBox(height: 12),
+      ...eligible.map(_availableCouponCard),
       if (ineligible.isNotEmpty) ...[
-        const SizedBox(height: 12),
-        Text('NOT ELIGIBLE YET', style: p(11, w: FontWeight.w800, color: C.t3)),
-        const SizedBox(height: 8),
+        Padding(padding: const EdgeInsets.fromLTRB(4, 6, 4, 8), child: Text('Unlock with a bigger order', style: p(12, color: V.fog))),
         ...ineligible.map(_availableCouponCard),
       ],
     ];
@@ -1166,36 +1026,25 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final reason = asStr(c['reason']);
     final code = asStr(c['code']);
     final desc = asStr(c['description']);
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-      decoration: BoxDecoration(
-        color: eligible ? C.green.withValues(alpha: 0.06) : const Color(0xFFF3F3F3),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: eligible ? C.green.withValues(alpha: 0.45) : C.border),
-      ),
-      child: Row(children: [
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Flexible(child: Text(code, style: p(13, w: FontWeight.w800, color: eligible ? C.forest : C.t3), maxLines: 1, overflow: TextOverflow.ellipsis)),
-            if (eligible) ...[
-              const SizedBox(width: 8),
-              Text('Save ₹${saving.toStringAsFixed(0)}', style: p(11, w: FontWeight.w800, color: C.green)),
-            ],
-          ]),
-          if (desc.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 2), child: Text(desc, style: p(11, color: C.t3))),
-          if (!eligible) Padding(padding: const EdgeInsets.only(top: 2), child: Text(reason.isNotEmpty ? reason : 'Not eligible yet', style: p(10, w: FontWeight.w600, color: C.t3))),
-        ])),
-        const SizedBox(width: 10),
-        GestureDetector(
-          onTap: (eligible && !_couponBusy) ? () => _applyCoupon(code) : null,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(color: eligible ? C.forest : C.border, borderRadius: BorderRadius.circular(8)),
-            child: Text('APPLY', style: p(11, w: FontWeight.w800, color: eligible ? Colors.white : C.t3)),
-          ),
+    return GestureDetector(
+      onTap: (eligible && !_couponBusy) ? () => _applyCoupon(code) : null,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: eligible ? V.mint : Colors.white.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: eligible ? V.leaf.withValues(alpha: 0.45) : Colors.white),
         ),
-      ]),
+        child: Row(children: [
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(eligible ? '$code · save ₹${saving.toStringAsFixed(0)}' : code, style: p(13, w: FontWeight.w700, color: eligible ? V.deep : V.fog, ls: 0.3)),
+            if (desc.isNotEmpty || !eligible) Padding(padding: const EdgeInsets.only(top: 2),
+              child: Text(eligible ? desc : (reason.isNotEmpty ? reason : 'Not eligible yet'), style: p(11.5, color: eligible ? V.leaf : V.fog))),
+          ])),
+          if (eligible) Text('Apply', style: p(12.5, w: FontWeight.w600, color: V.deep)),
+        ]),
+      ),
     );
   }
 
@@ -1249,6 +1098,47 @@ class MyOrdersScreen extends StatefulWidget {
   @override State<MyOrdersScreen> createState() => _MyOrdersState();
 }
 
+String _orderAddr(String s) {
+  final reg = RegExp(r'-?\d{1,3}\.\d{4,}');
+  if (reg.allMatches(s).length >= 2) return 'Service location';
+  return s.isEmpty ? '—' : s;
+}
+
+String _orderDate(Map<String, dynamic> o) {
+  final d = DateTime.tryParse(asStr(o['createdAt'] ?? o['created_at']));
+  if (d == null) return '';
+  const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return '${d.day} ${m[d.month - 1]} ${d.year}';
+}
+
+String? _itemImage(Map<String, dynamic> item) {
+  final prod = asMap(item['product']);
+  for (final v in [prod['images'], item['images']]) {
+    final l = asList(v);
+    if (l.isNotEmpty && l.first.toString().isNotEmpty) return l.first.toString();
+  }
+  for (final v in [prod['image'], item['image'], item['product_image']]) {
+    final t = asStr(v);
+    if (t.isNotEmpty && t != 'null') return t;
+  }
+  return null;
+}
+
+class _Thumb extends StatelessWidget {
+  final String? url; final double size;
+  const _Thumb({required this.url, this.size = 44});
+  @override
+  Widget build(BuildContext ctx) => Container(
+    width: size, height: size,
+    decoration: BoxDecoration(color: V.mint, borderRadius: BorderRadius.circular(size * 0.28), border: Border.all(color: Colors.white, width: 2)),
+    clipBehavior: Clip.antiAlias,
+    child: url == null
+      ? Icon(Icons.local_florist_outlined, size: size * 0.45, color: V.deep)
+      : CachedNetworkImage(fadeInDuration: const Duration(milliseconds: 120), fadeOutDuration: Duration.zero, placeholderFadeInDuration: Duration.zero, memCacheWidth: 900, imageUrl: url!, fit: BoxFit.cover,
+          errorWidget: (_, __, ___) => Icon(Icons.local_florist_outlined, size: size * 0.45, color: V.deep)),
+  );
+}
+
 class _MyOrdersState extends State<MyOrdersScreen> {
   final _api = Api(); List<dynamic> _orders = []; bool _loading = true;
   @override void initState() { super.initState(); _load(); }
@@ -1259,161 +1149,222 @@ class _MyOrdersState extends State<MyOrdersScreen> {
       if (mounted) setState(() { _orders = asList(r); _loading = false; });
     } catch (_) { if (mounted) setState(() => _loading = false); }
   }
-  String _cleanAddr(String s) {
-    final reg = RegExp(r'-?\d{1,3}\.\d{4,}');
-    if (reg.allMatches(s).length >= 2) return 'Service Location';
-    return s.isEmpty ? '—' : s;
-  }
 
   @override
-  Widget build(BuildContext ctx) => Scaffold(
-    backgroundColor: C.bg, 
-    body: CustomScrollView(slivers: [
-      SliverToBoxAdapter(child: GHeader(pb: 16, child: Row(children: [
-        GestureDetector(onTap: () => Navigator.pop(ctx), 
-          child: Container(width: 36, height: 36, decoration: BoxDecoration(color: Colors.white.withOpacity(0.12), borderRadius: BorderRadius.circular(10)), 
-          child: const Icon(Icons.arrow_back_ios_rounded, size: 15, color: Colors.white))), 
-        const SizedBox(width: 14), 
-        Text('My Orders', style: p(17, w: FontWeight.w700, color: Colors.white))
-      ]))), 
-      SliverPadding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100), 
-        sliver: _loading 
-          ? SliverList(delegate: SliverChildBuilderDelegate((_, __) => const GSkelCard(), childCount: 4)) 
-          : _orders.isEmpty 
-            ? const SliverFillRemaining(child: GEmpty(title: 'No orders yet', sub: 'Your shop orders will appear here', icon: Icons.shopping_bag_outlined)) 
-            : SliverList(delegate: SliverChildBuilderDelegate((_, i) { 
-                final o = asMap(_orders[i]); 
-                final status = asStr(o['status'], 'pending'); 
-                final dateStr = asStr(o['createdAt'] ?? o['created_at'], '');
+  Widget build(BuildContext ctx) {
+    final bottom = MediaQuery.of(ctx).padding.bottom + 32;
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: RefreshIndicator(
+        color: V.leaf, onRefresh: _load,
+        child: CustomScrollView(physics: const AlwaysScrollableScrollPhysics(), slivers: [
+          const SliverToBoxAdapter(child: VPageHeader(title: 'Orders', subtitle: 'Everything you ordered from the shop.')),
+          const SliverToBoxAdapter(child: SizedBox(height: 20)),
+          if (_loading)
+            SliverPadding(padding: EdgeInsets.fromLTRB(16, 0, 16, bottom),
+              sliver: SliverList(delegate: SliverChildBuilderDelegate((_, __) => const GSkelCard(), childCount: 4)))
+          else if (_orders.isEmpty)
+            SliverFillRemaining(hasScrollBody: false, child: GEmpty(
+              title: 'No orders yet', sub: 'Plants and supplies you order will appear here.', icon: Icons.shopping_bag_outlined,
+              action: GBtn(label: 'Visit the shop', onTap: () => Navigator.pushNamed(ctx, '/shop'), w: 200, h: 48)))
+          else
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, bottom),
+              sliver: SliverList(delegate: SliverChildBuilderDelegate((_, i) {
+                final o = asMap(_orders[i]);
+                final items = asList(o['items']).map(asMap).toList();
+                final count = items.fold<int>(0, (t, it) => t + (asInt(it['quantity']) > 0 ? asInt(it['quantity']) : 1));
+                final firstName = items.isNotEmpty ? asStr(asMap(items.first['product'])['name'] ?? items.first['product_name']) : '';
                 return Padding(
-                  padding: const EdgeInsets.only(bottom: 12), 
+                  padding: const EdgeInsets.only(bottom: 12),
                   child: GCard(
-                    padding: const EdgeInsets.all(16), 
+                    padding: const EdgeInsets.all(16),
+                    radius: BorderRadius.circular(22),
                     onTap: () => Navigator.push(ctx, MaterialPageRoute(builder: (_) => OrderDetailScreen(order: o))),
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Row(children: [
-                        Expanded(child: Text(asStr(o['order_number'], '#${o['id']}'), style: p(14, w: FontWeight.w700, color: C.t1))), 
-                        GBadge(status)
-                      ]), 
-                      const SizedBox(height: 8), 
-                      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                        Text('₹${asDouble(o['total_amount']).toStringAsFixed(0)}', style: p(16, w: FontWeight.w800, color: C.green)), 
-                        Text(dateStr.length >= 10 ? dateStr.substring(0,10) : '—', style: p(11, color: C.t4)),
+                        // Overlapping product thumbnails
+                        SizedBox(
+                          width: items.isEmpty ? 44 : 44 + (items.length.clamp(1, 3) - 1) * 26.0,
+                          height: 44,
+                          child: Stack(children: [
+                            if (items.isEmpty) const _Thumb(url: null),
+                            for (var k = 0; k < items.length && k < 3; k++)
+                              Positioned(left: k * 26.0, child: _Thumb(url: _itemImage(items[k]))),
+                          ]),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(firstName.isNotEmpty ? (items.length > 1 ? '$firstName + ${items.length - 1} more' : firstName) : asStr(o['order_number'], 'Order #${o['id']}'),
+                            maxLines: 1, overflow: TextOverflow.ellipsis, style: vx(16, w: FontWeight.w600, color: V.ink)),
+                          const SizedBox(height: 2),
+                          Text('$count item${count == 1 ? '' : 's'}  ·  ${_orderDate(o)}', style: p(11.5, color: V.fog)),
+                        ])),
                       ]),
-                      const SizedBox(height: 6), 
-                      Text(_cleanAddr(asStr(o['shipping_address'] ?? o['delivery_address'], '—')), style: p(11, color: C.t3), maxLines: 1, overflow: TextOverflow.ellipsis)
-                    ])
-                  )
-                ).animate().fadeIn(delay: Duration(milliseconds: i * 40)); 
-              }, childCount: _orders.length)
-            )
-      )
-    ]));
+                      const SizedBox(height: 14),
+                      Row(children: [
+                        GBadge(asStr(o['status'], 'pending'), small: true),
+                        const SizedBox(width: 8),
+                        Text(asStr(o['order_number'], '#${o['id']}'), style: p(11, color: V.fog)),
+                        const Spacer(),
+                        Text('₹${asDouble(o['total_amount']).toStringAsFixed(0)}', style: vx(19, w: FontWeight.w600, color: V.ink)),
+                      ]),
+                    ]),
+                  ),
+                );
+              }, childCount: _orders.length)),
+            ),
+        ]),
+      ),
+    );
+  }
 }
 
 class OrderDetailScreen extends StatelessWidget {
   final Map<String, dynamic> order;
   const OrderDetailScreen({super.key, required this.order});
 
-  String _cleanAddr(String s) {
-    final reg = RegExp(r'-?\d{1,3}\.\d{4,}');
-    if (reg.allMatches(s).length >= 2) return 'Service Location';
-    return s.isEmpty ? '—' : s;
-  }
+  static const _steps = ['Placed', 'Confirmed', 'Shipped', 'Delivered'];
+  static int _stage(String s) => switch (s) {
+    'confirmed' || 'processing' || 'packed' => 1,
+    'shipped' || 'out_for_delivery' || 'dispatched' => 2,
+    'delivered' || 'completed' => 3,
+    _ => 0,
+  };
 
   @override
   Widget build(BuildContext ctx) {
-    final items = asList(order['items']);
+    final items = asList(order['items']).map(asMap).toList();
     final status = asStr(order['status'], 'pending');
-    final dateStr = asStr(order['createdAt'] ?? order['created_at'], '');
+    final cancelled = status == 'cancelled' || status == 'failed' || status == 'refunded';
     final gstAmt = asDouble(order['gst_amount']);
     final applyGst = order['apply_gst'] == true || order['apply_gst'] == 1;
     final state = asStr(order['shipping_state'], '');
     final isUP = state.toLowerCase().contains('uttar') || state.toLowerCase() == 'up';
+    final subtotal = items.fold<double>(0, (acc, m) => acc + asDouble(m['price']) * asInt(m['quantity']));
+    final stage = _stage(status);
+
+    Widget billRow(String l, String v, {bool strong = false}) => Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(children: [
+        Text(l, style: strong ? vx(17, w: FontWeight.w600, color: V.ink) : p(13, color: V.fog)),
+        const Spacer(),
+        Text(v, style: strong ? vx(20, w: FontWeight.w600, color: V.ink) : p(13, w: FontWeight.w600, color: V.ink)),
+      ]),
+    );
 
     return Scaffold(
-      backgroundColor: C.bg,
+      backgroundColor: Colors.transparent,
       body: CustomScrollView(slivers: [
-        SliverToBoxAdapter(child: GHeader(pb: 52, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            GestureDetector(onTap: () => Navigator.pop(ctx),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.arrow_back_ios_rounded, size: 15, color: Colors.white70),
-                const SizedBox(width: 4),
-                Text('My Orders', style: p(13, color: Colors.white70)),
-              ])),
-            GestureDetector(
-              onTap: () => downloadInvoice(ctx, InvoiceType.order, asInt(order['id'])),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.receipt_long_rounded, size: 14, color: Colors.white),
-                  const SizedBox(width: 6),
-                  Text('Download Invoice', style: p(12, w: FontWeight.w700, color: Colors.white)),
-                ]),
-              ),
-            ),
+        SliverToBoxAdapter(child: SafeArea(bottom: false, child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 16, 0),
+          child: Row(children: [
+            VRoundBtn(icon: Icons.arrow_back_rounded, onTap: () => Navigator.pop(ctx)),
+            const Spacer(),
+            VPillAction(label: 'Invoice', icon: Icons.download_rounded,
+              onTap: () => downloadInvoice(ctx, InvoiceType.order, asInt(order['id']))),
           ]),
-          const SizedBox(height: 16),
-          Text(asStr(order['order_number'], '#${order['id']}'), style: p(20, w: FontWeight.w800, color: Colors.white)),
-          const SizedBox(height: 8),
-          GBadge(status),
-        ]))),
-
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-          sliver: SliverList(delegate: SliverChildListDelegate([
-            // Order Info
-            GCard(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        ))),
+        SliverToBoxAdapter(child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+          child: VPod(
+            radius: 28,
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
-                Container(width: 4, height: 16, decoration: BoxDecoration(color: C.green, borderRadius: BorderRadius.circular(99))),
-                const SizedBox(width: 8),
-                Text('ORDER DETAILS', style: p(10, w: FontWeight.w700, color: C.t4, ls: 0.8)),
+                Text(asStr(order['order_number'], '#${order['id']}'), style: p(12.5, color: Colors.white.withValues(alpha: 0.85))),
+                const Spacer(),
+                Text(_orderDate(order), style: p(12.5, color: Colors.white.withValues(alpha: 0.85))),
               ]),
-              const SizedBox(height: 16),
-              GDetailRow(icon: Icons.location_on_rounded, label: 'ADDRESS', value: _cleanAddr(asStr(order['shipping_address'] ?? order['delivery_address'], '—'))),
-              GDetailRow(icon: Icons.calendar_today_rounded, label: 'DATE', value: dateStr.length >= 10 ? dateStr.substring(0,10) : '—'),
-              GDetailRow(icon: Icons.payments_rounded, label: 'METHOD', value: asStr(order['payment_method'], 'COD').toUpperCase()),
-              if (applyGst && gstAmt > 0) ...[
-                GDetailRow(
-                  icon: Icons.inventory_2_rounded, label: 'SUBTOTAL',
-                  value: '₹${items.fold<double>(0, (acc, it) {
-                    final m = asMap(it);
-                    return acc + asDouble(m['price']) * asInt(m['quantity']);
-                  }).toStringAsFixed(0)}',
-                ),
-                if (isUP) ...[
-                  GDetailRow(icon: Icons.percent_rounded, label: 'SGST', value: '₹${(gstAmt / 2).toStringAsFixed(2)}'),
-                  GDetailRow(icon: Icons.percent_rounded, label: 'CGST', value: '₹${(gstAmt / 2).toStringAsFixed(2)}'),
-                ] else
-                  GDetailRow(icon: Icons.percent_rounded, label: 'IGST', value: '₹${gstAmt.toStringAsFixed(2)}'),
+              const SizedBox(height: 8),
+              Text(cancelled ? 'Order ${status.replaceAll('_', ' ')}' : (stage == 3 ? 'Delivered' : 'On its way to you'),
+                style: vx(26, w: FontWeight.w600, color: Colors.white, ls: -0.5)),
+              const SizedBox(height: 4),
+              Text('₹${asDouble(order['total_amount']).toStringAsFixed(0)}  ·  ${asStr(order['payment_method'], 'COD').toUpperCase()}',
+                style: p(13, color: V.lime, w: FontWeight.w600)),
+              if (!cancelled) ...[
+                const SizedBox(height: 18),
+                Row(children: [
+                  for (var i = 0; i < _steps.length; i++) ...[
+                    Container(width: 12, height: 12, decoration: BoxDecoration(shape: BoxShape.circle,
+                      color: i <= stage ? V.lime : Colors.transparent,
+                      border: Border.all(color: i <= stage ? V.lime : Colors.white.withValues(alpha: 0.3), width: 1.5))),
+                    if (i < _steps.length - 1)
+                      Expanded(child: Container(height: 2, margin: const EdgeInsets.symmetric(horizontal: 4),
+                        color: i < stage ? V.lime : Colors.white.withValues(alpha: 0.18))),
+                  ],
+                ]),
+                const SizedBox(height: 8),
+                Row(children: [
+                  for (var i = 0; i < _steps.length; i++)
+                    Expanded(child: Text(_steps[i],
+                      textAlign: i == 0 ? TextAlign.left : i == _steps.length - 1 ? TextAlign.right : TextAlign.center,
+                      style: p(10.5, w: i == stage ? FontWeight.w600 : FontWeight.w400,
+                        color: i <= stage ? Colors.white : Colors.white.withValues(alpha: 0.45)))),
+                ]),
               ],
-              GDetailRow(icon: Icons.receipt_rounded, label: 'TOTAL', value: '₹${asDouble(order['total_amount']).toStringAsFixed(0)}'),
-            ])),
-
-            const SizedBox(height: 16),
-            GSec('Order Items'),
+            ]),
+          ),
+        )),
+        SliverPadding(
+          padding: EdgeInsets.fromLTRB(16, 4, 16, MediaQuery.of(ctx).padding.bottom + 32),
+          sliver: SliverList(delegate: SliverChildListDelegate([
+            GSec('Items'),
             const SizedBox(height: 12),
-            ...items.map((i) {
-              final item = asMap(i);
-              final product = asMap(item['product']);
-              return Padding(padding: const EdgeInsets.only(bottom: 12),
-                child: GCard(padding: const EdgeInsets.all(12), child: Row(children: [
-                   Container(width: 44, height: 44, decoration: BoxDecoration(color: C.bg, borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.eco_rounded, color: C.green, size: 20)),
-                   const SizedBox(width: 12),
-                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                     Text(asStr(product['name'] ?? item['product_name']), style: p(13, w: FontWeight.w700, color: C.t1)),
-                     Text('${item['quantity']} x ₹${asDouble(item['price']).toStringAsFixed(0)}', style: p(11, color: C.t3)),
-                   ])),
-                   Text('₹${(asDouble(item['price']) * asInt(item['quantity'])).toStringAsFixed(0)}', style: p(14, w: FontWeight.w800, color: C.t1)),
+            GCard(padding: const EdgeInsets.fromLTRB(14, 6, 14, 6), child: Column(children: [
+              for (var k = 0; k < items.length; k++) ...[
+                if (k > 0) Container(height: 1, color: V.ink.withValues(alpha: 0.06)),
+                Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Row(children: [
+                  _Thumb(url: _itemImage(items[k]), size: 52),
+                  const SizedBox(width: 12),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(asStr(asMap(items[k]['product'])['name'] ?? items[k]['product_name']), maxLines: 2, overflow: TextOverflow.ellipsis,
+                      style: p(13.5, w: FontWeight.w600, color: V.ink, h: 1.3)),
+                    const SizedBox(height: 2),
+                    Text('${asInt(items[k]['quantity'])} × ₹${asDouble(items[k]['price']).toStringAsFixed(0)}', style: p(12, color: V.fog)),
+                  ])),
+                  Text('₹${(asDouble(items[k]['price']) * asInt(items[k]['quantity'])).toStringAsFixed(0)}', style: vx(16, w: FontWeight.w600, color: V.ink)),
                 ])),
-              );
-            }),
+              ],
+            ])),
+            const SizedBox(height: 22),
+            GSec('Bill'),
+            const SizedBox(height: 12),
+            GCard(padding: const EdgeInsets.fromLTRB(18, 18, 18, 10), child: Column(children: [
+              billRow('Items', '₹${subtotal.toStringAsFixed(0)}'),
+              if (applyGst && gstAmt > 0) ...[
+                if (isUP) ...[
+                  billRow('SGST', '₹${(gstAmt / 2).toStringAsFixed(2)}'),
+                  billRow('CGST', '₹${(gstAmt / 2).toStringAsFixed(2)}'),
+                ] else
+                  billRow('IGST', '₹${gstAmt.toStringAsFixed(2)}'),
+              ],
+              Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: CustomPaint(size: const Size(double.infinity, 1), painter: _HDash())),
+              const SizedBox(height: 6),
+              billRow('Total', '₹${asDouble(order['total_amount']).toStringAsFixed(0)}', strong: true),
+            ])),
+            const SizedBox(height: 22),
+            GSec('Delivery address'),
+            const SizedBox(height: 12),
+            GCard(padding: const EdgeInsets.all(16), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const VOrb(icon: Icons.location_on_outlined, size: 40, dark: false),
+              const SizedBox(width: 12),
+              Expanded(child: Text(_orderAddr(asStr(order['shipping_address'] ?? order['delivery_address'], '—')),
+                style: p(13, color: V.ink, h: 1.45))),
+            ])),
           ])),
         ),
       ]),
     );
   }
+}
+
+class _HDash extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = V.ink.withValues(alpha: 0.18)..strokeWidth = 1;
+    for (double x = 0; x < size.width; x += 7) { canvas.drawLine(Offset(x, 0), Offset(x + 3.5, 0), paint); }
+  }
+  @override
+  bool shouldRepaint(_HDash old) => false;
 }

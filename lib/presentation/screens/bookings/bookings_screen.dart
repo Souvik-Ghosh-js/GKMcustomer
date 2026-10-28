@@ -1,173 +1,397 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../../../data/services/api.dart';
 import '../../../data/services/invoice_service.dart';
 import '../../theme/theme.dart';
 import '../../widgets/widgets.dart';
 
 // ─── Bookings List ────────────────────────────────────────────────────────────
+// Layout: serif page title + "Book a visit", filter chips, a "Next visit"
+// panel with a live progress tracker for the soonest upcoming booking, then
+// ticket-style cards (date stub | details) for everything else.
 class BookingsScreen extends StatefulWidget {
+  // Back arrow action. In the bottom-nav shell this returns to the Home tab;
+  // when pushed as a route it falls back to popping.
+  final VoidCallback? onBack;
   static bool needsReload = false;
-  const BookingsScreen({super.key});
+  const BookingsScreen({super.key, this.onBack});
   @override State<BookingsScreen> createState() => _BkListState();
 }
-class _BkListState extends State<BookingsScreen> with SingleTickerProviderStateMixin {
+class _BkListState extends State<BookingsScreen> {
   final _api = Api();
-  late final TabController _tab;
   static const _labels  = ['All', 'Pending', 'Active', 'Done', 'Cancelled'];
   static const _filters = ['all', 'pending', 'in_progress', 'completed', 'cancelled'];
+  int _f = 0;
+  // Client-side ordering of the loaded bookings.
+  String _sort = 'upcoming';
+  static const _sortLabels = {'upcoming': 'Upcoming first', 'newest': 'Newest first', 'oldest': 'Oldest first'};
+  static const _statusIcons = [Icons.apps_rounded, Icons.hourglass_empty_rounded, Icons.directions_walk_rounded, Icons.task_alt_rounded, Icons.event_busy_outlined];
+
+  Future<void> _openFilters() async {
+    final res = await showFilterSheet(context,
+      title: 'Filter bookings',
+      sections: [
+        VFilterSection(title: 'Status', defaultValue: '0', options: [
+          for (var i = 0; i < _labels.length; i++) VFilterOption('$i', _labels[i], icon: _statusIcons[i]),
+        ]),
+        VFilterSection(title: 'Sort by', defaultValue: 'upcoming', tiles: false, options: [
+          for (final e in _sortLabels.entries) VFilterOption(e.key, e.value),
+        ]),
+      ],
+      current: ['$_f', _sort],
+    );
+    if (res == null || !mounted) return;
+    setState(() => _sort = res[1]);
+    _setFilter(int.parse(res[0]));
+  }
+
+  List<dynamic> _sorted(List<dynamic> l) {
+    if (_sort == 'upcoming') return l;
+    DateTime at(dynamic b) => DateTime.tryParse(asStr(asMap(b)['scheduled_date'])) ?? DateTime(2000);
+    final out = [...l]..sort((a, b) => at(a).compareTo(at(b)));
+    return _sort == 'newest' ? out.reversed.toList() : out;
+  }
   List<dynamic> _items = [];
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: _labels.length, vsync: this)
-      ..addListener(() {
-        if (!_tab.indexIsChanging) {
-          setState(() { _items = []; });
-          _load();
-        }
-      });
-    
-    if (BookingsScreen.needsReload) {
-      BookingsScreen.needsReload = false;
-    }
+    if (BookingsScreen.needsReload) BookingsScreen.needsReload = false;
     _load();
   }
-  @override void dispose() { _tab.dispose(); super.dispose(); }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final f = _filters[_tab.index];
+      final f = _filters[_f];
       final r = await _api.getMyBookings(status: f == 'all' ? null : f, limit: 20);
       final data = asMap(r);
       if (mounted) setState(() { _items = asList(data['bookings'] ?? r); _loading = false; });
     } catch (_) { if (mounted) setState(() => _loading = false); }
   }
 
+  void _setFilter(int i) {
+    if (i == _f) return;
+    setState(() { _f = i; _items = []; });
+    _load();
+  }
+
+  static const _upcoming = ['pending', 'assigned', 'en_route', 'arrived', 'in_progress'];
+
   @override
-  Widget build(BuildContext ctx) => Scaffold(
-    primary: false,
-    backgroundColor: C.bg,
-    body: NestedScrollView(
-      headerSliverBuilder: (_, __) => [
-        SliverToBoxAdapter(child: GHeader(pb: 16,
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Expanded(child: Text('My Bookings', style: p(22, w: FontWeight.w800, color: Colors.white))),
+  Widget build(BuildContext ctx) {
+    final bottom = MediaQuery.of(ctx).padding.bottom + 24;
+    // Soonest upcoming booking gets the hero tracker panel.
+    Map<String, dynamic>? next;
+    final rest = <Map<String, dynamic>>[];
+    for (final e in _sorted(_items)) {
+      final b = asMap(e);
+      if (next == null && _upcoming.contains(asStr(b['status']))) { next = b; } else { rest.add(b); }
+    }
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: RefreshIndicator(
+        color: V.leaf, onRefresh: _load,
+        child: CustomScrollView(physics: const AlwaysScrollableScrollPhysics(), slivers: [
+          SliverToBoxAdapter(child: SafeArea(bottom: false, child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 16, 0),
+            child: Row(children: [
+              _CircleBtn(icon: Icons.arrow_back_rounded, onTap: () => widget.onBack != null ? widget.onBack!() : Navigator.maybePop(ctx)),
+              const Spacer(),
               GestureDetector(
                 onTap: () => Navigator.pushNamed(ctx, '/book'),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [C.gold, C.goldDk]),
-                    borderRadius: BorderRadius.circular(99)),
-                  child: Text('+ Book', style: p(13, w: FontWeight.w700, color: const Color(0xFF1A0F00))))),
+                  padding: const EdgeInsets.fromLTRB(14, 10, 16, 10),
+                  decoration: BoxDecoration(color: V.ink, borderRadius: BorderRadius.circular(99)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.add_rounded, size: 18, color: V.lime),
+                    const SizedBox(width: 6),
+                    Text('Book a visit', style: p(13, w: FontWeight.w600, color: Colors.white)),
+                  ]),
+                ),
+              ),
             ]),
-          ]))),
-        SliverToBoxAdapter(child: Container(
-          color: C.bg,
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-          child: Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: C.white, borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: C.border), boxShadow: s1()),
-            child: TabBar(
-              controller: _tab,
-              indicator: BoxDecoration(color: C.forest, borderRadius: BorderRadius.circular(10)),
-              indicatorSize: TabBarIndicatorSize.tab,
-              labelStyle: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.w700),
-              unselectedLabelStyle: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.w500),
-              labelColor: Colors.white, unselectedLabelColor: C.t4, dividerColor: Colors.transparent,
-              isScrollable: true, tabAlignment: TabAlignment.start,
-              tabs: _labels.map((l) => Tab(text: l, height: 32)).toList())))),
-        ],
-      body: RefreshIndicator(
-        color: C.forest, onRefresh: _load,
-        child: _loading
-          ? ListView.builder(padding: const EdgeInsets.fromLTRB(16, 0, 16, 100), itemCount: 5, itemBuilder: (_, __) => const GSkelCard())
-          : _items.isEmpty
-            ? ListView(children: [GEmpty(title: 'No bookings here', sub: 'Book your first garden visit', icon: Icons.calendar_month_outlined,
-                action: GBtn(label: 'Book Now', onTap: () => Navigator.pushNamed(ctx, '/book'), w: 160, h: 44))])
-            : ListView.builder(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-                itemCount: _items.length,
-                itemBuilder: (_, i) => _BkCard(b: _items[i])
-                  .animate().fadeIn(delay: Duration(milliseconds: i * 45)).slideY(begin: 0.08, end: 0, delay: Duration(milliseconds: i * 45))),
+          ))),
+          SliverToBoxAdapter(child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 16, 10),
+            child: Row(children: [
+              Expanded(child: Text('Bookings', style: vx(34, w: FontWeight.w600, color: V.ink, ls: -0.8))),
+              VFilterButton(active: _f != 0 || _sort != 'upcoming', onTap: _openFilters),
+            ]),
+          )),
+          if (_f != 0 || _sort != 'upcoming') SliverToBoxAdapter(child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Wrap(spacing: 8, runSpacing: 8, children: [
+              if (_f != 0) VActiveFilter(label: _labels[_f], onClear: () => _setFilter(0)),
+              if (_sort != 'upcoming') VActiveFilter(label: _sortLabels[_sort]!, onClear: () => setState(() => _sort = 'upcoming')),
+            ]),
+          )),
+          const SliverToBoxAdapter(child: SizedBox(height: 18)),
+          if (_loading)
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, bottom),
+              sliver: SliverList(delegate: SliverChildBuilderDelegate((_, __) => const GSkelCard(), childCount: 4)),
+            )
+          else if (_items.isEmpty)
+            SliverFillRemaining(hasScrollBody: false, child: GEmpty(
+              title: 'No bookings here', sub: 'Book your first garden visit', icon: Icons.calendar_month_outlined,
+              action: GBtn(label: 'Book a visit', onTap: () => Navigator.pushNamed(ctx, '/book'), w: 200, h: 48)))
+          else ...[
+            if (next != null)
+              SliverToBoxAdapter(child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+                child: _NextVisit(b: next),
+              )),
+            if (rest.isNotEmpty) SliverToBoxAdapter(child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Text(next != null ? 'All bookings' : '${rest.length} booking${rest.length == 1 ? '' : 's'}',
+                style: vx(19, w: FontWeight.w600, color: V.ink)),
+            )),
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, bottom),
+              sliver: SliverList(delegate: SliverChildBuilderDelegate(
+                (_, i) => _BkCard(b: rest[i])
+                  ,
+                childCount: rest.length,
+              )),
+            ),
+          ],
+        ]),
       ),
+    );
+  }
+}
+
+// Small round glass button (back etc.)
+class _CircleBtn extends StatelessWidget {
+  final IconData icon; final VoidCallback onTap;
+  const _CircleBtn({required this.icon, required this.onTap});
+  @override
+  Widget build(BuildContext ctx) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      width: 44, height: 44,
+      decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.75), shape: BoxShape.circle, border: Border.all(color: Colors.white)),
+      child: Icon(icon, size: 21, color: V.ink),
     ),
   );
 }
 
+DateTime? _visitDate(Map<String, dynamic> b) => DateTime.tryParse(asStr(b['scheduled_date']));
+const _months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const _days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+String _bkAmount(Map<String, dynamic> b) {
+  final t = asDouble(b['total_amount']) > 0
+      ? asDouble(b['total_amount'])
+      : asDouble(b['base_amount']) + asList(b['addons']).fold(0.0, (sum, a) => sum + asDouble(asMap(a)['price']));
+  return '₹${t.toStringAsFixed(0)}';
+}
+
+String _bkTitle(Map<String, dynamic> b) {
+  final plan = asStr(asMap(b['plan'])['name']);
+  return plan.isNotEmpty ? plan : 'Garden visit';
+}
+
+// ─── Next visit — dark panel with a step tracker ─────────────────────────────
+class _NextVisit extends StatelessWidget {
+  final Map<String, dynamic> b;
+  const _NextVisit({required this.b});
+
+  @override
+  Widget build(BuildContext ctx) {
+    final d = _visitDate(b);
+    final time = asStr(b['scheduled_time']);
+    final gardener = asStr(asMap(b['gardener'])['name']);
+    return GestureDetector(
+      onTap: () => Navigator.push(ctx, _slide(BookingDetailScreen(id: asInt(b['id'])))),
+      child: VPod(
+        radius: 28,
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Text('Next visit', style: p(12.5, color: Colors.white.withValues(alpha: 0.85))),
+            const Spacer(),
+            Text(asStr(b['booking_number'], '#${b['id']}'), style: p(11.5, color: Colors.white.withValues(alpha: 0.85))),
+          ]),
+          const SizedBox(height: 10),
+          Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text(d != null ? '${_days[d.weekday - 1]}, ${d.day} ${_months[d.month - 1]}' : 'Date to be set',
+              style: vx(26, w: FontWeight.w600, color: Colors.white, ls: -0.5)),
+            if (time.isNotEmpty) ...[
+              const SizedBox(width: 10),
+              Padding(padding: const EdgeInsets.only(bottom: 3),
+                child: Text(time.length >= 5 ? time.substring(0, 5) : time, style: p(14, w: FontWeight.w600, color: V.lime))),
+            ],
+          ]),
+          const SizedBox(height: 4),
+          Text(gardener.isNotEmpty ? 'Gardener: $gardener' : _bkTitle(b), style: p(13, color: Colors.white.withValues(alpha: 0.8))),
+          const SizedBox(height: 18),
+          _Tracker(status: asStr(b['status'])),
+          const SizedBox(height: 16),
+          Row(children: [
+            const Icon(Icons.location_on_outlined, size: 15, color: Colors.white54),
+            const SizedBox(width: 6),
+            Expanded(child: Text(cleanAddr(asStr(b['service_address'], '—')), maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: p(12, color: Colors.white.withValues(alpha: 0.85)))),
+            const SizedBox(width: 8),
+            Text(_bkAmount(b), style: vx(17, w: FontWeight.w600, color: Colors.white)),
+          ]),
+        ]),
+      ),
+    );
+  }
+}
+
+// ─── Ticket card: date stub | perforation | details ─────────────────────────
 class _BkCard extends StatelessWidget {
   final Map<String, dynamic> b;
   const _BkCard({required this.b});
   @override
   Widget build(BuildContext ctx) {
     final status = asStr(b['status'], 'pending');
-    final active = ['en_route','arrived','in_progress'].contains(status);
+    final d = _visitDate(b);
+    final addons = _cardAddons(b);
     return Padding(padding: const EdgeInsets.only(bottom: 12),
       child: GCard(
         padding: EdgeInsets.zero,
+        radius: BorderRadius.circular(22),
         onTap: () => Navigator.push(ctx, _slide(BookingDetailScreen(id: asInt(b['id'])))),
-        child: Column(children: [
-          if (active) Container(
-            height: 34, width: double.infinity,
-            decoration: BoxDecoration(
-              color: C.amber.withOpacity(0.10),
-              borderRadius: const BorderRadius.only(topLeft: Radius.circular(20), topRight: Radius.circular(20))),
-            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Container(width: 6, height: 6, decoration: const BoxDecoration(shape: BoxShape.circle, color: C.amber)),
-              const SizedBox(width: 7),
-              Text('GARDENER EN ROUTE', style: p(9.5, w: FontWeight.w800, color: C.amber, ls: 0.8)),
-            ])),
-          Padding(padding: const EdgeInsets.all(16), child: Column(children: [
-            Row(children: [
-              Container(width: 44, height: 44,
-                decoration: BoxDecoration(
-                  color: active ? C.amber.withOpacity(0.1) : Colors.white.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(13)),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(13),
-                  child: Image.asset('assets/images/logo.png', fit: BoxFit.contain),
-                )),
-              const SizedBox(width: 12),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(asStr(b['booking_number'], '#${b['id']}'), style: p(13, w: FontWeight.w700, color: C.t1)),
-                Text(cleanAddr(asStr(b['gardener']?['name'], asStr(b['service_address']))), style: p(11, color: C.t3), maxLines: 1, overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 2),
-                Text('₹${(asDouble(b['total_amount']) > 0 ? asDouble(b['total_amount']) : (asDouble(b['base_amount']) + asList(b['addons']).fold(0.0, (sum, a) => sum + asDouble(asMap(a)['price'])))).toStringAsFixed(0)}', style: p(15, w: FontWeight.w800, color: C.forest)),
-              ])),
-              GBadge(status),
+        child: IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          // Date stub
+          Container(
+            width: 74,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Text(d != null ? _months[d.month - 1].toUpperCase() : '—', style: p(10.5, w: FontWeight.w600, color: V.fog, ls: 1)),
+              Text(d != null ? '${d.day}' : '–', style: vx(30, w: FontWeight.w600, color: V.ink, h: 1.1)),
+              Text(d != null ? _days[d.weekday - 1] : '', style: p(11, color: V.fog)),
             ]),
-            const SizedBox(height: 10),
-            Row(children: [
-              const Icon(Icons.location_on_rounded, size: 13, color: C.t4),
-              const SizedBox(width: 4),
-              Expanded(child: Text(cleanAddr(asStr(b['service_address'], '—')), style: p(11, color: C.t3), maxLines: 1, overflow: TextOverflow.ellipsis)),
-              const Icon(Icons.calendar_today_rounded, size: 12, color: C.t4),
-              const SizedBox(width: 4),
-              Text(asStr(b['scheduled_date'], '—').length >= 10 ? asStr(b['scheduled_date']).substring(0,10) : '—', style: p(11, color: C.t3)),
+          ),
+          // Perforation
+          SizedBox(width: 1, child: CustomPaint(painter: _DashPainter())),
+          Expanded(child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Expanded(child: Text(_bkTitle(b), maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: vx(16.5, w: FontWeight.w600, color: V.ink))),
+                const SizedBox(width: 8),
+                GBadge(status, small: true),
+              ]),
+              const SizedBox(height: 4),
+              Text(cleanAddr(asStr(b['service_address'], '—')), maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: p(12, color: V.fog)),
+              if (addons.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text('+ ${addons.take(2).map((a) => asStr(a['name'] ?? a['addon_name'] ?? asMap(a['addon'])['name'], 'Add-on')).join(', ')}${addons.length > 2 ? ' +${addons.length - 2}' : ''}',
+                  maxLines: 1, overflow: TextOverflow.ellipsis, style: p(11, color: V.leaf)),
+              ],
+              const SizedBox(height: 10),
+              Row(children: [
+                Text(asStr(b['booking_number'], '#${b['id']}'), style: p(11, color: V.fog)),
+                const Spacer(),
+                Text(_bkAmount(b), style: vx(17, w: FontWeight.w600, color: V.ink)),
+              ]),
             ]),
-            if (_cardAddons(b).isNotEmpty) ...[
-              const SizedBox(height: 8),
-              const Divider(height: 1, color: Color(0xFFF0F0F0)),
-              const SizedBox(height: 8),
-              Wrap(spacing: 8, children: _cardAddons(b).take(3).map((a) {
-                final name = asStr(a['name'] ?? a['addon_name'] ?? asMap(a['addon'])['name'], 'Add-on');
-                final price = asDouble(a['price'] ?? a['amount'] ?? asMap(a['addon'])['price']);
-                return Text('+ $name${price > 0 ? " (₹${price.toStringAsFixed(0)})" : ""}', style: p(10, w: FontWeight.w600, color: C.t4));
-              }).toList()),
-            ],
-          ])),
-        ]),
+          )),
+        ])),
       ));
+  }
+}
+
+class _DashPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = V.ink.withValues(alpha: 0.15)..strokeWidth = 1;
+    for (double y = 10; y < size.height - 10; y += 7) {
+      canvas.drawLine(Offset(0, y), Offset(0, y + 3.5), paint);
+    }
+  }
+  @override
+  bool shouldRepaint(_DashPainter old) => false;
+}
+
+// ─── Visit summary (booking detail hero) ─────────────────────────────────────
+class _VisitSummary extends StatelessWidget {
+  final Map<String, dynamic> b;
+  const _VisitSummary({required this.b});
+  @override
+  Widget build(BuildContext ctx) {
+    final d = _visitDate(b);
+    final time = asStr(b['scheduled_time']);
+    final status = asStr(b['status']);
+    final upcoming = _BkListState._upcoming.contains(status);
+    return GCard(
+      radius: BorderRadius.circular(28),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(_bkTitle(b), style: p(13, w: FontWeight.w500, color: V.leaf)),
+        const SizedBox(height: 6),
+        Text(d != null ? '${_days[d.weekday - 1]}, ${d.day} ${_months[d.month - 1]} ${d.year}' : 'Date to be set',
+          style: vx(26, w: FontWeight.w600, color: V.ink, ls: -0.5)),
+        if (time.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Row(children: [
+            const Icon(Icons.schedule_rounded, size: 16, color: V.deep),
+            const SizedBox(width: 6),
+            Text(time.length >= 5 ? time.substring(0, 5) : time, style: p(15, w: FontWeight.w600, color: V.deep)),
+          ]),
+        ],
+        if (upcoming) ...[
+          const SizedBox(height: 18),
+          _Tracker(status: status, light: true),
+        ],
+        const SizedBox(height: 16),
+        Container(height: 1, color: V.ink.withValues(alpha: 0.08)),
+        const SizedBox(height: 14),
+        Row(children: [
+          Text('Total', style: p(13, color: V.fog)),
+          const Spacer(),
+          Text(_bkAmount(b), style: vx(22, w: FontWeight.w600, color: V.ink)),
+        ]),
+      ]),
+    );
+  }
+}
+
+// Booked → Assigned → On the way → In progress
+class _Tracker extends StatelessWidget {
+  final String status;
+  final bool light; // on a light card (dark text) vs a dark panel
+  const _Tracker({required this.status, this.light = false});
+  static const _steps = ['Booked', 'Assigned', 'On the way', 'In progress'];
+  int get _stage => switch (status) { 'assigned' => 1, 'en_route' => 2, 'arrived' || 'in_progress' => 3, _ => 0 };
+  @override
+  Widget build(BuildContext ctx) {
+    final stage = _stage;
+    final done = light ? V.leaf : V.lime;
+    final idle = light ? V.ink.withValues(alpha: 0.15) : Colors.white.withValues(alpha: 0.3);
+    final on = light ? V.ink : Colors.white;
+    final off = light ? V.fog : Colors.white.withValues(alpha: 0.7);
+    return Column(children: [
+      Row(children: [
+        for (var i = 0; i < _steps.length; i++) ...[
+          Container(width: 12, height: 12, decoration: BoxDecoration(shape: BoxShape.circle,
+            color: i <= stage ? done : Colors.transparent,
+            border: Border.all(color: i <= stage ? done : idle, width: 1.5))),
+          if (i < _steps.length - 1)
+            Expanded(child: Container(height: 2, margin: const EdgeInsets.symmetric(horizontal: 4),
+              color: i < stage ? done : idle)),
+        ],
+      ]),
+      const SizedBox(height: 8),
+      Row(children: [
+        for (var i = 0; i < _steps.length; i++)
+          Expanded(child: Text(_steps[i],
+            textAlign: i == 0 ? TextAlign.left : i == _steps.length - 1 ? TextAlign.right : TextAlign.center,
+            style: p(11, w: i == stage ? FontWeight.w700 : FontWeight.w500,
+              color: i <= stage ? on : off))),
+      ]),
+    ]);
   }
 }
 
@@ -264,14 +488,7 @@ class _BkDetailState extends State<BookingDetailScreen> {
     final cfg = asMap(_timeAddonInfo?['config']);
     final mins = asInt(cfg['block_minutes']);
     final price = asDouble(cfg['block_price']);
-    final ok = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: Text('Add ${mins} minutes?', style: p(17, w: FontWeight.w700, color: C.t1)),
-      content: Text('₹${price.toStringAsFixed(0)} will be added to this visit. The gardener will be notified.', style: p(14, color: C.t3)),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context, false), child: Text('Cancel', style: p(14, color: C.t3))),
-        TextButton(onPressed: () => Navigator.pop(context, true),  child: Text('Confirm', style: p(14, w: FontWeight.w700, color: C.forest))),
-      ]));
+    final ok = await showGlassConfirm(context, title: 'Add $mins minutes?', message: '₹${price.toStringAsFixed(0)} will be added to this visit. Your gardener will be notified.', confirmLabel: 'Add time', cancelLabel: 'Cancel', destructive: false);
     if (ok != true) return;
     setState(() => _addingTime = true);
     try {
@@ -285,14 +502,7 @@ class _BkDetailState extends State<BookingDetailScreen> {
   String get _status => asStr(_bk?['status'], 'pending');
 
   Future<void> _cancel() async {
-    final ok = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: Text('Cancel Booking?', style: p(17, w: FontWeight.w700, color: C.t1)),
-      content: Text('This cannot be undone.', style: p(14, color: C.t3)),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context, false), child: Text('Keep', style: p(14, color: C.t3))),
-        TextButton(onPressed: () => Navigator.pop(context, true),  child: Text('Cancel Booking', style: p(14, w: FontWeight.w700, color: C.red))),
-      ]));
+    final ok = await showGlassConfirm(context, title: 'Cancel this booking?', message: 'This cannot be undone.', confirmLabel: 'Cancel booking', cancelLabel: 'Keep it', destructive: true);
     if (ok != true) return;
     setState(() => _cancelling = true);
     try {
@@ -314,8 +524,7 @@ class _BkDetailState extends State<BookingDetailScreen> {
   }
 
   void _showRating() {
-    showModalBottomSheet(context: context, isScrollControlled: true, backgroundColor: C.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+    showGlassSheet(context,
       builder: (_) => StatefulBuilder(builder: (ctx2, ss) => Padding(
         padding: EdgeInsets.fromLTRB(22, 22, 22, MediaQuery.of(ctx2).viewInsets.bottom + 22),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -339,11 +548,15 @@ class _BkDetailState extends State<BookingDetailScreen> {
 
   @override
   Widget build(BuildContext ctx) {
-    if (_loading) return Scaffold(backgroundColor: C.bg,
-      appBar: AppBar(backgroundColor: C.forest, leading: const BackButton()),
-      body: const Center(child: CircularProgressIndicator(color: C.forest)));
-    if (_bk == null) return Scaffold(backgroundColor: C.bg,
-      appBar: AppBar(backgroundColor: C.forest), body: const GEmpty(title: 'Booking not found', sub: 'It may have been removed or cancelled'));
+    if (_loading) return Scaffold(backgroundColor: Colors.transparent, body: Column(children: [
+      const VPageHeader(title: 'Booking'),
+      const Expanded(child: Center(child: CircularProgressIndicator(color: V.leaf))),
+    ]));
+    if (_bk == null) return Scaffold(backgroundColor: Colors.transparent, body: Column(children: [
+      const VPageHeader(title: 'Booking'),
+      Expanded(child: GEmpty(title: 'Booking not found', sub: 'It may have been removed or cancelled.', icon: Icons.event_busy_outlined,
+        action: GBtn(label: 'Back to bookings', onTap: () => Navigator.pop(ctx), w: 220, h: 48))),
+    ]));
 
     final gardener  = asMap(_bk!['gardener']);
     final canCancel = ['pending', 'assigned'].contains(_status);
@@ -351,31 +564,28 @@ class _BkDetailState extends State<BookingDetailScreen> {
     final hasRating = _bk!['rating'] != null;
 
     return Scaffold(
-      backgroundColor: C.bg,
+      backgroundColor: Colors.transparent,
       body: CustomScrollView(slivers: [
-        SliverToBoxAdapter(child: GHeader(pb: 52, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          GestureDetector(onTap: () => Navigator.pop(ctx),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.arrow_back_ios_rounded, size: 15, color: Colors.white70),
-              const SizedBox(width: 4),
-              Text('My Bookings', style: p(13, color: Colors.white70)),
-            ])),
-          const SizedBox(height: 16),
-          Text(asStr(_bk!['booking_number'], '#${_bk!['id']}'), style: p(20, w: FontWeight.w800, color: Colors.white)),
-          const SizedBox(height: 8),
-          GBadge(_status),
-        ]))),
+        SliverToBoxAdapter(child: SafeArea(bottom: false, child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 16, 0),
+          child: Row(children: [
+            _CircleBtn(icon: Icons.arrow_back_rounded, onTap: () => Navigator.pop(ctx)),
+            const SizedBox(width: 12),
+            Expanded(child: Text(asStr(_bk!['booking_number'], '#${_bk!['id']}'), style: p(13, color: V.fog))),
+            GBadge(_status),
+          ]),
+        ))),
+        SliverToBoxAdapter(child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+          child: _VisitSummary(b: _bk!),
+        )),
 
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
           sliver: SliverList(delegate: SliverChildListDelegate([
             // Booking info
             GCard(padding: const EdgeInsets.all(20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Container(width: 4, height: 16, decoration: BoxDecoration(color: C.gold, borderRadius: BorderRadius.circular(99))),
-                const SizedBox(width: 8),
-                Text('BOOKING DETAILS', style: p(10, w: FontWeight.w700, color: C.t4, ls: 0.8)),
-              ]),
+              GSec('Visit details'),
               const SizedBox(height: 16),
               GDetailRow(icon: Icons.location_on_rounded, label: 'ADDRESS', value: cleanAddr(asStr(_bk!['service_address'], '—'))),
               GDetailRow(icon: Icons.calendar_month_rounded, label: 'DATE', value: asStr(_bk!['scheduled_date'], '—').length >= 10 ? asStr(_bk!['scheduled_date']).substring(0,10) : '—'),
@@ -389,7 +599,7 @@ class _BkDetailState extends State<BookingDetailScreen> {
                 const SizedBox(height: 12),
                 const Divider(height: 1, color: Color(0xFFF0F0F0)),
                 const SizedBox(height: 12),
-                Text('INCLUDED ADD-ONS', style: p(10, w: FontWeight.w700, color: C.t4, ls: 0.8)),
+                Text('Included add-ons', style: vx(15, w: FontWeight.w600, color: V.ink)),
                 const SizedBox(height: 8),
                 ..._addons.map((a) {
                   final addon = _normalizeAddon(a);
@@ -407,27 +617,34 @@ class _BkDetailState extends State<BookingDetailScreen> {
 
               if ((_bk!['customer_notes'] as String?)?.isNotEmpty == true)
                 GDetailRow(icon: Icons.sticky_note_2_outlined, label: 'NOTES', value: asStr(_bk!['customer_notes'])),
-            ])).animate().fadeIn(),
+            ])),
 
             // Visit OTP
             if (_status == 'assigned') ...[
               const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [C.forest.withOpacity(0.08), C.forest.withOpacity(0.02)]),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: C.forest.withOpacity(0.15))),
-                child: Row(children: [
-                  const Icon(Icons.lock_rounded, color: C.forest, size: 22),
-                  const SizedBox(width: 12),
-                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('Visit OTP', style: p(14, w: FontWeight.w700, color: C.t1)),
-                    Text('Share with gardener when they arrive', style: p(11, color: C.t3)),
-                    const SizedBox(height: 8),
-                    Text(asStr(_bk!['otp'], '—'), style: p(28, w: FontWeight.w900, color: C.forest, ls: 3, h: 1)),
-                  ])),
-                ])).animate().fadeIn(delay: 60.ms),
+              GCard(
+                radius: BorderRadius.circular(24),
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    const Icon(Icons.lock_outline_rounded, color: V.deep, size: 18),
+                    const SizedBox(width: 8),
+                    Text('Visit OTP', style: vx(18, w: FontWeight.w600, color: V.ink)),
+                  ]),
+                  const SizedBox(height: 4),
+                  Text('Share this with your gardener when they arrive', style: p(12.5, color: V.fog)),
+                  const SizedBox(height: 14),
+                  Row(children: [
+                    for (final ch in asStr(_bk!['otp'], '—').split('')) Container(
+                      width: 46, height: 54,
+                      margin: const EdgeInsets.only(right: 8),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(color: V.mint, borderRadius: BorderRadius.circular(14)),
+                      child: Text(ch, style: vx(26, w: FontWeight.w600, color: V.ink)),
+                    ),
+                  ]),
+                ]),
+              ),
             ],
 
             // Gardener card
@@ -449,7 +666,7 @@ class _BkDetailState extends State<BookingDetailScreen> {
                   const SizedBox(width: 4),
                   Text(asDouble(gardener['avg_rating']).toStringAsFixed(1), style: p(14, w: FontWeight.w700, color: C.t1)),
                 ]),
-              ])).animate().fadeIn(delay: 80.ms),
+              ])),
             ],
 
             // Time-extension addon — only after customer has shared OTP & visit started
@@ -459,13 +676,13 @@ class _BkDetailState extends State<BookingDetailScreen> {
                 info: _timeAddonInfo!,
                 loading: _addingTime,
                 onAdd: _addTime,
-              ).animate().fadeIn(delay: 90.ms),
+              ),
             ],
 
             // Visit report (before/after photos + checklist)
             if (_status == 'completed') ...[
               const SizedBox(height: 12),
-              _VisitReportCard(bk: _bk!).animate().fadeIn(delay: 100.ms),
+              _VisitReportCard(bk: _bk!),
             ],
 
             // Rating display
@@ -485,19 +702,19 @@ class _BkDetailState extends State<BookingDetailScreen> {
                   Expanded(child: Text(
                     (_bk!['review'] as String?)?.isNotEmpty == true ? asStr(_bk!['review']) : 'Review submitted',
                     style: p(13, color: C.t2, h: 1.4), maxLines: 2, overflow: TextOverflow.ellipsis)),
-                ])).animate().fadeIn(delay: 100.ms),
+                ])),
             ],
 
             const SizedBox(height: 20),
-            if (canRate)   GBtn(label: 'Rate Your Visit', icon: Icons.star_rounded, gold: true, onTap: _showRating).animate().fadeIn(),
+            if (canRate)   GBtn(label: 'Rate Your Visit', icon: Icons.star_rounded, gold: true, onTap: _showRating),
             if (!['cancelled', 'failed'].contains(_status)) ...[
               if (canRate) const SizedBox(height: 10),
               GBtn(label: 'Download Invoice', icon: Icons.receipt_long_rounded, outline: true,
-                onTap: () => downloadInvoice(ctx, InvoiceType.booking, widget.id)).animate().fadeIn(),
+                onTap: () => downloadInvoice(ctx, InvoiceType.booking, widget.id)),
             ],
             if (canCancel) ...[
               const SizedBox(height: 10),
-              GBtn(label: 'Cancel Booking', danger: true, outline: true, loading: _cancelling, onTap: _cancel).animate().fadeIn(),
+              GBtn(label: 'Cancel Booking', danger: true, outline: true, loading: _cancelling, onTap: _cancel),
             ],
           ])),
         ),
@@ -660,7 +877,7 @@ class _ReportPhoto extends StatelessWidget {
       ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Image.network(
-          url,
+          url, cacheWidth: 900,
           height: 120, width: double.infinity, fit: BoxFit.cover,
           errorBuilder: (_, __, ___) => Container(
             height: 120,
@@ -692,12 +909,5 @@ List<dynamic> _cardAddons(Map<String, dynamic> b) {
   return [];
 }
 
-Route<dynamic> _slide(Widget page) => PageRouteBuilder(
-  transitionDuration: 340.ms, reverseTransitionDuration: 280.ms,
-  pageBuilder: (_, __, ___) => page,
-  transitionsBuilder: (_, a, __, child) {
-    final c = CurvedAnimation(parent: a, curve: Curves.easeOutCubic);
-    return SlideTransition(
-      position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero).animate(c),
-      child: FadeTransition(opacity: Tween<double>(begin: 0.35, end: 1).animate(c), child: child));
-  });
+// Standard route: glass backdrop + iOS slide/swipe-back from the theme.
+Route<dynamic> _slide(Widget page) => MaterialPageRoute(builder: (_) => page);

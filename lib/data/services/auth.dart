@@ -18,7 +18,6 @@ class AuthProvider extends ChangeNotifier {
   String  get phone         => asStr(_user?['phone'] ?? _user?['phone_number'] ?? _user?['mobile']);
   String? get email         => _user?['email'] as String?;
   String? get profileImage  => _user?['profile_image'] as String?;
-  double  get walletBalance => asDouble(_user?['wallet_balance']);
   String? get referralCode  => _user?['referral_code'] as String?;
 
   AuthProvider() { _hydrate(); }
@@ -36,6 +35,9 @@ class AuthProvider extends ChangeNotifier {
     _loading = false;
     notifyListeners();
   }
+
+  // Re-read the stored session (after Api.verifyOtp has saved a new token).
+  Future<void> reload() => _hydrate();
 
   Future<void> login(Map<String, dynamic> user, String token) async {
     _user = user; _token = token;
