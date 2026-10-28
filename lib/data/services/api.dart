@@ -520,6 +520,23 @@ class Api {
   Future<dynamic> cancelRazorpayPayment({required String razorpayOrderId}) =>
       req('POST', '/payments/razorpay/cancel', body: {'razorpay_order_id': razorpayOrderId});
 
+  // ─── GARDENER TIPS (online only — gateway-verified server-side) ────────────
+  Future<dynamic> getTipConfig() => req('GET', '/tips/config', auth: false);
+  Future<dynamic> createTip({required int bookingId, required int amountRupees, String? idempotencyKey}) =>
+      req('POST', '/tips', body: {
+        'booking_id': bookingId,
+        'amount': amountRupees,
+        if (idempotencyKey != null) 'idempotency_key': idempotencyKey,
+      });
+  Future<dynamic> verifyTip({required String razorpayOrderId, required String razorpayPaymentId, required String razorpaySignature}) =>
+      req('POST', '/tips/verify', body: {
+        'razorpay_order_id': razorpayOrderId,
+        'razorpay_payment_id': razorpayPaymentId,
+        'razorpay_signature': razorpaySignature,
+      });
+  Future<dynamic> cancelTip({required String razorpayOrderId}) =>
+      req('POST', '/tips/cancel', body: {'razorpay_order_id': razorpayOrderId});
+
   // ─── PLANTOPEDIA ──────────────────────────────────────────────────────────
   Future<dynamic> identifyPlant(File image) =>
       upload('POST', '/plants/identify', fields: {}, files: {'image': image});

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../../data/services/api.dart';
 import '../../../data/services/invoice_service.dart';
+import '../../../data/services/razorpay_service.dart';
 import '../../theme/theme.dart';
 import '../../widgets/widgets.dart';
 
@@ -407,6 +408,7 @@ class _BkDetailState extends State<BookingDetailScreen> {
   List<dynamic> _addons = [];
   Map<String, dynamic>? _timeAddonInfo;
   bool _loading = true, _cancelling = false, _rating = false, _addingTime = false;
+  bool _tipped = false; // hides the tip button after a verified tip this session
   Timer? _timer;
   int _stars = 5;
   final _reviewCtrl = TextEditingController();
@@ -521,6 +523,89 @@ class _BkDetailState extends State<BookingDetailScreen> {
       if (mounted) { showMsg(context, 'Thank you for your review!', ok: true); Navigator.pop(context); }
     } on ApiError catch (e) { if (mounted) showMsg(context, e.message, err: true); }
     finally { if (mounted) setState(() => _rating = false); }
+  }
+
+  // ── Tip your gardener — online only; success is shown only after the
+  // backend verifies the payment (the sheet awaits that verification).
+  Future<void> _showTipSheet() async {
+    // Admin-configured suggested amounts + limits; sensible fallbacks offline.
+    List<int> suggested = const [20, 50, 100, 200];
+    int minAmt = 10, maxAmt = 5000;
+    try {
+      final cfg = asMap(await _api.getTipConfig());
+      final s = asList(cfg['suggested']).map((e) => asInt(e)).where((n) => n > 0).toList();
+      if (s.isNotEmpty) suggested = s;
+      if (asInt(cfg['min']) > 0) minAmt = asInt(cfg['min']);
+      if (asInt(cfg['max']) > 0) maxAmt = asInt(cfg['max']);
+    } catch (_) { /* fall back to defaults */ }
+    if (!mounted) return;
+
+    int? picked = suggested.isNotEmpty ? suggested[1 < suggested.length ? 1 : 0] : null;
+    final customCtrl = TextEditingController();
+    bool paying = false;
+    final gardenerName = asStr(asMap(_bk!['gardener'])['name']);
+
+    showGlassSheet(context,
+      builder: (_) => StatefulBuilder(builder: (ctx2, ss) => Padding(
+        padding: EdgeInsets.fromLTRB(22, 22, 22, MediaQuery.of(ctx2).viewInsets.bottom + 22),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: C.border, borderRadius: BorderRadius.circular(99)))),
+          const SizedBox(height: 18),
+          Center(child: Text('Tip ${gardenerName.isNotEmpty ? gardenerName : 'your Gardener'} 💚', style: p(18, w: FontWeight.w800, color: C.t1))),
+          const SizedBox(height: 6),
+          Center(child: Text('100% of your tip goes to the gardener', style: p(12.5, color: C.t3))),
+          const SizedBox(height: 18),
+          Wrap(spacing: 10, runSpacing: 10, children: [
+            ...suggested.map((a) {
+              final sel = picked == a && customCtrl.text.isEmpty;
+              return GestureDetector(
+                onTap: () => ss(() { picked = a; customCtrl.clear(); }),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: sel ? V.leaf : Colors.white,
+                    borderRadius: BorderRadius.circular(99),
+                    border: Border.all(color: sel ? V.leaf : C.border, width: 1.5)),
+                  child: Text('₹$a', style: p(14, w: FontWeight.w700, color: sel ? Colors.white : C.t1))));
+            }),
+          ]),
+          const SizedBox(height: 12),
+          TextField(
+            controller: customCtrl,
+            keyboardType: TextInputType.number,
+            style: p(14, color: C.t2),
+            decoration: InputDecoration(hintText: 'Custom amount (₹$minAmt – ₹$maxAmt)'),
+            onChanged: (_) => ss(() {}),
+          ),
+          const SizedBox(height: 20),
+          GBtn(
+            label: paying ? 'Opening payment…' : 'Pay Tip Online',
+            gold: true, loading: paying,
+            onTap: () async {
+              final custom = int.tryParse(customCtrl.text.trim());
+              final amount = customCtrl.text.trim().isNotEmpty ? custom : picked;
+              if (amount == null || amount < minAmt || amount > maxAmt) {
+                showMsg(ctx2, 'Enter an amount between ₹$minAmt and ₹$maxAmt', err: true);
+                return;
+              }
+              ss(() => paying = true);
+              final r = await RazorpayService().payTip(bookingId: widget.id, amountRupees: amount);
+              ss(() => paying = false);
+              if (!ctx2.mounted) return;
+              if (r.ok) {
+                Navigator.pop(ctx2);
+                if (mounted) {
+                  setState(() => _tipped = true);
+                  showMsg(context, 'Tip sent — thank you!${(r.message ?? '').isNotEmpty ? ' Ref: ${r.message}' : ''}', ok: true);
+                }
+              } else if (!r.cancelled) {
+                showMsg(ctx2, r.message ?? 'Payment failed — you have not been charged a tip.', err: true);
+              }
+            },
+          ),
+          const SizedBox(height: 8),
+          Center(child: Text('Secure online payment · verified before it counts', style: p(11, color: C.t4))),
+        ]))));
   }
 
   void _showRating() {
@@ -707,6 +792,10 @@ class _BkDetailState extends State<BookingDetailScreen> {
 
             const SizedBox(height: 20),
             if (canRate)   GBtn(label: 'Rate Your Visit', icon: Icons.star_rounded, gold: true, onTap: _showRating),
+            if (_status == 'completed' && gardener.isNotEmpty && !_tipped) ...[
+              if (canRate) const SizedBox(height: 10),
+              GBtn(label: 'Tip your Gardener', icon: Icons.volunteer_activism_rounded, outline: true, onTap: _showTipSheet),
+            ],
             if (!['cancelled', 'failed'].contains(_status)) ...[
               if (canRate) const SizedBox(height: 10),
               GBtn(label: 'Download Invoice', icon: Icons.receipt_long_rounded, outline: true,
