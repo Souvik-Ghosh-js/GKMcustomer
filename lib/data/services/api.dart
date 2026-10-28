@@ -246,6 +246,9 @@ class Api {
   // ─── PLANS & ADDONS ──────────────────────────────────────────────────────
   Future<dynamic> getPlans() => req('GET', '/plans', auth: false);
   Future<dynamic> getAddons() => req('GET', '/addons', auth: false);
+  // Plant-count pricing slabs: base covers 10 plants, the slab extra is added
+  // on top; beyond the last slab = custom quote (admin-configurable).
+  Future<dynamic> getPlantSlabs() => req('GET', '/pricing/plant-slabs', auth: false);
   Future<dynamic> getBookingAddons(int bookingId) => req('GET', '/bookings/$bookingId/addons');
   Future<dynamic> addBookingAddons(int bookingId, List<Map<String, dynamic>> addonIds) =>
       req('POST', '/bookings/$bookingId/addons', body: {'addon_ids': addonIds});
