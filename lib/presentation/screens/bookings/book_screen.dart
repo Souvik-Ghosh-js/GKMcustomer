@@ -89,11 +89,11 @@ class _BookState extends State<BookScreen> {
   bool get _planPreSelected => widget.planId != null;
 
   List<String> get _labels {
-    // Add-ons step removed from the flow for now (re-add 'Add-ons' to re-enable).
+    // Add-ons are offered on one-time (on-demand) visits only.
     if (_planPreSelected) {
-      return _isSub ? ['Location', 'Checkout'] : ['Location', 'Plants', 'Schedule', 'Checkout'];
+      return _isSub ? ['Location', 'Checkout'] : ['Location', 'Plants', 'Add-ons', 'Schedule', 'Checkout'];
     } else {
-      return _isSub ? ['Location', 'Plan', 'Checkout'] : ['Location', 'Plan', 'Plants', 'Schedule', 'Checkout'];
+      return _isSub ? ['Location', 'Plan', 'Checkout'] : ['Location', 'Plan', 'Plants', 'Add-ons', 'Schedule', 'Checkout'];
     }
   }
 
