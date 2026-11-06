@@ -73,9 +73,10 @@ class _BookState extends State<BookScreen> {
   static const _slots = ['09:00','10:00','11:00','14:00','15:00','16:00','17:00'];
   List<String> _availableSlots = [];
   bool _loadingSlots = false, _slotsLoaded = false, _noGardenersInZone = false, _slotsError = false;
+  String _blockedMsg = ''; // non-empty when the admin has closed bookings on _date
   // Availability per date, so switching back to a date shows its real slots
   // instantly instead of an unloaded (all-open) grid.
-  final Map<String, ({List<String> slots, bool noGardeners})> _slotCache = {};
+  final Map<String, ({List<String> slots, bool noGardeners, String blockedMsg})> _slotCache = {};
 
   // Instant booking has been removed from the UI. All on-demand bookings are
   // scheduled — the user picks a date + time. The instant flow (toggle,
@@ -306,20 +307,22 @@ class _BookState extends State<BookScreen> {
       _date = date;
       _slotsError = false;
       if (cached != null) {
-        _applySlots(cached.slots, cached.noGardeners);
+        _applySlots(cached.slots, cached.noGardeners, cached.blockedMsg);
       } else {
         _availableSlots = [];
         _slotsLoaded = false;
         _noGardenersInZone = false;
+        _blockedMsg = '';
       }
     });
     _loadAvailability(date);
   }
 
   // Must be called inside setState.
-  void _applySlots(List<String> slots, bool noGardeners) {
+  void _applySlots(List<String> slots, bool noGardeners, String blockedMsg) {
     _availableSlots = slots;
     _noGardenersInZone = noGardeners;
+    _blockedMsg = blockedMsg;
     _slotsLoaded = true;
     // Drop a previously picked time that isn't free on this date.
     if (!slots.contains(_time)) _time = '';
@@ -334,10 +337,15 @@ class _BookState extends State<BookScreen> {
       if (!mounted) return;
       final slots = asList(res is Map ? (res['available_slots'] ?? res['slots'] ?? res) : res)
           .map((s) => s.toString()).toList();
-      final noGardeners = (res is Map && res['no_gardeners_in_zone'] == true) || slots.isEmpty;
-      _slotCache[date] = (slots: slots, noGardeners: noGardeners);
+      // Admin-blocked day: the backend sends {slots: [], blocked: true, message}.
+      final blockedMsg = (res is Map && res['blocked'] == true)
+          ? asStr(res['message'], 'Bookings are closed on this date. Please pick another day.')
+          : '';
+      final noGardeners = blockedMsg.isEmpty &&
+          ((res is Map && res['no_gardeners_in_zone'] == true) || slots.isEmpty);
+      _slotCache[date] = (slots: slots, noGardeners: noGardeners, blockedMsg: blockedMsg);
       if (date != _date) return; // user moved on to another date
-      setState(() { _applySlots(slots, noGardeners); _loadingSlots = false; });
+      setState(() { _applySlots(slots, noGardeners, blockedMsg); _loadingSlots = false; });
     } catch (_) {
       if (!mounted || date != _date) return;
       setState(() {
@@ -881,14 +889,16 @@ class _BookState extends State<BookScreen> {
             ]),
           ),
         )
-      else if (_slotsLoaded && _noGardenersInZone)
+      else if (_slotsLoaded && (_blockedMsg.isNotEmpty || _noGardenersInZone))
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(color: const Color(0xFFFFF6E0), borderRadius: BorderRadius.circular(18), border: Border.all(color: const Color(0xFFF1D58A))),
           child: Row(children: [
             const Icon(Icons.event_busy_outlined, color: Color(0xFF8A6400), size: 20),
             const SizedBox(width: 10),
-            Expanded(child: Text('No gardeners are free on this date. Please pick another day.', style: p(13, w: FontWeight.w600, color: const Color(0xFF6B4E00), h: 1.4))),
+            Expanded(child: Text(
+              _blockedMsg.isNotEmpty ? _blockedMsg : 'No gardeners are free on this date. Please pick another day.',
+              style: p(13, w: FontWeight.w600, color: const Color(0xFF6B4E00), h: 1.4))),
           ]),
         )
       else
